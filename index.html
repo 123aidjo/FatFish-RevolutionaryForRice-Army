@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>大肥鱼 V2 · 控制面板</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/memory-workspace.js" defer></script>
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <main class="login-wrap" id="login-view">
+    <section class="login-card">
+      <img class="login-avatar" src="/assets/whale-girl.png" alt="大肥鱼蓝鲸标志" width="144" height="144">
+      <h1>大肥鱼 V2</h1>
+      <p>输入本机访问令牌，打开控制面板。</p>
+      <form id="login-form">
+        <label for="token">访问令牌</label>
+        <input id="token" type="password" autocomplete="off" required spellcheck="false">
+        <button class="primary" type="submit">进入面板</button>
+      </form>
+      <details><summary>如何获取访问令牌</summary>
+        <p>在项目目录的 WSL 终端运行：</p>
+        <code>~/.local/share/fishbot-v2/venv/bin/python main.py --panel-token</code>
+        <p>复制终端显示的令牌并粘贴到上方。</p>
+      </details>
+      <p id="login-error" role="alert"></p>
+    </section>
+  </main>
+
+  <div class="layout" id="workspace" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="#overview"><img class="brand-mark" src="/assets/whale-girl.png" alt="" width="40" height="40"><span>大肥鱼 V2<small>本机控制面板</small></span></a>
+      <nav aria-label="面板导航" id="nav">
+        <a href="#overview"><span aria-hidden="true">◈</span>总览</a>
+        <a href="#platforms"><span aria-hidden="true">◎</span>平台管理</a>
+        <a href="#persona"><span aria-hidden="true">✦</span>AI 人设</a>
+        <a href="#memory"><span aria-hidden="true">▤</span>记忆管理</a>
+        <a href="#stickers"><span aria-hidden="true">♡</span>表情包</a>
+        <a href="#messages"><span aria-hidden="true">☷</span>消息日志</a>
+        <a href="#settings"><span aria-hidden="true">⚙</span>系统设置</a>
+        <a href="#douyin-account"><span aria-hidden="true">♪</span>抖音账号</a>
+        <a href="#douyin-drafts"><span aria-hidden="true">✎</span>内容工作台</a>
+      </nav>
+      <button class="logout" id="logout" type="button">退出面板</button>
+    </aside>
+    <main class="content" id="content">
+      <header class="page-header">
+        <div><h1 id="page-title">总览</h1><p id="page-description"></p></div>
+        <button id="refresh" type="button">刷新</button>
+      </header>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <section id="page" aria-label="当前页面"></section>
+    </main>
+  </div>
+
+  <template id="overview-template">
+    <article class="hero">
+      <div>
+        <span class="pill hero-mode">本地模拟</span>
+        <h2>大肥鱼在线</h2>
+        <p>在这里查看服务状态，运行一次模拟对话。</p>
+        <div class="actions"><button class="primary" type="button" id="simulate">运行一次模拟</button>
+          <button class="hero-secondary" type="button" id="runtime-toggle"></button></div>
+      </div>
+      <div class="mascot" aria-hidden="true"><span class="bubble bubble-a"></span><span class="bubble bubble-b"></span>
+        <img class="mascot-avatar" src="/assets/whale-girl.png" alt="" width="192" height="192"><span class="bubble bubble-c"></span>
+      </div>
+    </article>
+    <div class="metric-grid" id="metrics"></div>
+    <div class="overview-grid">
+      <article class="card"><h2>平台与模型</h2><div id="connections"></div></article>
+      <article class="card"><h2>最近运行日志</h2><div id="recent-logs"></div></article>
+    </div>
+  </template>
+
+  <template id="messages-template">
+    <form class="filters card" id="message-filter">
+      <label>平台<select name="platform"><option value="">全部平台</option><option value="qq">QQ</option><option value="bilibili">B 站</option><option value="douyin">抖音</option></select></label>
+      <label>状态<select name="state"><option value="">全部状态</option><option value="received">已接收</option><option value="sent">已确认</option><option value="skipped">已跳过</option><option value="failed">失败</option><option value="uncertain">待核查</option><option value="pending">待发送</option><option value="sending">发送中</option><option value="evaluate">待评估</option><option value="evaluating">评估中</option></select></label>
+      <label>开始时间<input type="datetime-local" name="since"></label>
+      <label>结束时间<input type="datetime-local" name="until"></label>
+      <button class="primary" type="submit">筛选</button>
+    </form>
+    <article class="card" id="message-results"></article>
+  </template>
+</body>
+</html>

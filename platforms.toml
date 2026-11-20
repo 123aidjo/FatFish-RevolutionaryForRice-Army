@@ -1,0 +1,50 @@
+log_level = "INFO"
+
+[server]
+port = 8000
+
+[deepseek]
+name = "deepseek-flash"
+thinking = "disabled"
+
+[platforms.qq]
+enabled = false
+receive = false
+send = false
+allowlist = []
+
+[platforms.bilibili]
+enabled = false
+receive = false
+send = false
+allowlist = []
+
+[platforms.douyin]
+enabled = false
+receive = false
+send = false
+allowlist = []
+
+[chat]
+participation_every = 4
+max_event_age = 300
+send_timeout = 10
+model_timeout = 60
+
+[memory]
+recent_messages = 32
+summary_messages = 20
+summary_characters = 6000
+summary_seconds = 600
+summary_limit = 1800
+retry_seconds = 60
+
+[limits]
+per_channel_daily = 200
+global_daily = 400
+minimum_interval = 0
+
+[stickers]
+enabled = false
+min_interval = 60
+repeat_interval = 28800
