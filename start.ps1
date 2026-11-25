@@ -1,6 +1,24 @@
 ﻿param([switch]$NoBrowser, [switch]$Quiet, [switch]$StopService)
 
 $ErrorActionPreference = 'Stop'
+if ($env:FISHBOT_USE_WSL -ne '1') {
+    $nativePython = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
+    if (-not (Test-Path -LiteralPath $nativePython -PathType Leaf)) {
+        Write-Error 'Please double-click setup.bat first to prepare the project environment.'
+        exit 1
+    }
+    if ($StopService) {
+        Write-Output 'Use Stop Service in the Fatfish desktop window. Legacy WSL mode requires FISHBOT_USE_WSL=1.'
+        exit 0
+    }
+    & $nativePython -c 'import tkinter, fastapi, uvicorn, httpx, PIL, tomli_w, websockets'
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error 'Project dependencies are incomplete. Run setup.bat and retry.'
+        exit 1
+    }
+    & $nativePython -X utf8 (Join-Path $PSScriptRoot 'desktop.py')
+    exit $LASTEXITCODE
+}
 $python = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'FishbotV2Public\venv\Scripts\python.exe'
 $helper = Join-Path $PSScriptRoot 'launcher_windows.py'
 if (-not (Test-Path -LiteralPath $python -PathType Leaf) -or -not (Test-Path -LiteralPath $helper -PathType Leaf)) {

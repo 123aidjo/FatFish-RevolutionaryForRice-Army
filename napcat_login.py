@@ -2,13 +2,19 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import time
 from urllib.request import ProxyHandler, Request, build_opener
+from urllib.parse import urlsplit
+
+from local_runtime import apply_environment, local_url
+apply_environment()
 
 
-WEBUI_URL = "http://127.0.0.1:16099/webui/"
-API_URL = "http://127.0.0.1:16099/api/"
+WEBUI_URL = local_url(os.getenv("FISHBOT_NAPCAT_WEBUI_URL", "http://127.0.0.1:16099/webui/"), "http")
+_webui = urlsplit(WEBUI_URL)
+API_URL = f"{_webui.scheme}://{_webui.netloc}/api/"
 
 
 class NapCatLogin:
@@ -38,9 +44,9 @@ class NapCatLogin:
                 auth = self.post("auth/login", {"hash": digest})
                 self.credential = auth.get("Credential") if isinstance(auth, dict) else ""
             status = self.post("QQLogin/CheckLoginStatus", {}) if self.credential else None
-        except OSError:
+        except (OSError, ValueError, KeyError, TypeError):
             self.credential = ""
-            raise
+            raise OSError("无法读取 NapCat 登录状态，请检查 WebUI 地址、配置文件或登录密码。") from None
         if not isinstance(status, dict):
             self.credential = ""
             raise OSError("V2 登录状态暂不可用")

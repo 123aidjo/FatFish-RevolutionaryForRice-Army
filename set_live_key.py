@@ -1,5 +1,6 @@
 import getpass
 import os
+from pathlib import Path
 from settings import default_database_path
 from tempfile import NamedTemporaryFile
 

@@ -93,7 +93,7 @@ def port_open() -> bool:
 
 
 @contextmanager
-def exclusive():
+def exclusive(*, wait_ms: int = 90000):
     # Windows 命名互斥只串行化本项目的启动和停止。
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
@@ -106,7 +106,7 @@ def exclusive():
         raise LaunchError("无法建立大肥鱼 V2 启停锁。")
     acquired = False
     try:
-        acquired = kernel.WaitForSingleObject(handle, 90000) in (0, 0x80)
+        acquired = kernel.WaitForSingleObject(handle, wait_ms) in (0, 0x80)
         if not acquired:
             raise LaunchError("另一个 V2 启停操作还在执行，请稍后重试。")
         yield

@@ -72,9 +72,10 @@ def test_windows_lifecycle_real_wsl_and_unrelated_port():
     wsl = launcher.wsl_executable(Path(os.environ["SystemRoot"]) / "System32/wsl.exe")
 
     def ps(name, *options):
+        environment = dict(os.environ, FISHBOT_USE_WSL="1")
         return subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "RemoteSigned",
                                "-File", str(PROJECT_ROOT / name), "-Quiet", *options],
-                              capture_output=True, timeout=100)
+                              capture_output=True, timeout=100, env=environment)
 
     def checked(name, *options):
         result = ps(name, *options)

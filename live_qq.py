@@ -12,10 +12,14 @@ from pathlib import Path
 import secrets
 import sqlite3
 import time
+from urllib.parse import urlsplit
 from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 
 import httpx
+
+from local_runtime import apply_environment, local_url
+apply_environment()
 
 from adapter_qq import QQAdapter
 from cognition import Cognition
@@ -39,7 +43,7 @@ def live_ids_configured() -> bool:
     return all(x.isascii() and x.isdecimal() and 5 <= len(x) <= 12 and x[0] != "0"
                for x in (_BOT_ENV, _GROUP_ENV))
 CHANNEL = ("qq", "group", GROUP)
-WS_URL = "ws://127.0.0.1:13001"
+WS_URL = local_url(os.getenv("FISHBOT_ONEBOT_URL", "ws://127.0.0.1:13001"), "ws")
 log = logging.getLogger(__name__)
 DAY = 86400
 CHECKIN_START = 10 * 3600
@@ -106,13 +110,19 @@ async def consumer_lock(directory: Path):
 
 
 def token_for(directory: Path) -> str:
+    explicit = os.getenv("FISHBOT_ONEBOT_TOKEN", "")
+    if explicit:
+        return explicit
     config = directory / "napcat/config"
     for path in (config / f"onebot11_{BOT}.json", config / "onebot11.json"):
         if not path.is_file():
             continue
         entries = json.loads(path.read_text(encoding="utf-8-sig")).get("network", {}).get("websocketServers", [])
         for entry in entries:
-            if entry.get("enable") and str(entry.get("port")) == "3001":
+            expected_port = str(urlsplit(WS_URL).port)
+            # The original Docker setup maps host 13001 to container 3001.
+            ports = {expected_port, "3001"} if expected_port == "13001" else {expected_port}
+            if entry.get("enable") and str(entry.get("port")) in ports:
                 return entry.get("token") or entry.get("accessToken") or ""
     return ""
 
@@ -152,7 +162,8 @@ class LiveQQ:
     def __init__(self, store: Store):
         self.store = store
         self.directory = store.path.parent
-        self.napcat_login = NapCatLogin(self.directory / "napcat/config/webui.json")
+        self.napcat_login = NapCatLogin(Path(os.getenv("FISHBOT_NAPCAT_WEBUI_CONFIG")
+                                             or self.directory / "napcat/config/webui.json"))
         self.connected = False
         self.group_ready = False
         self.nickname = ""
@@ -552,6 +563,10 @@ async def console(action: str):
         raise ModelError("V2 尚未配置 DeepSeek API Key")
     async with runtime.rpc().opened() as rpc:
         await authenticate(rpc)
+        group = await rpc.call("get_group_info", {"group_id": int(GROUP)})
+        details = group.get("data")
+        if group.get("retcode") != 0 or not isinstance(details, dict) or str(details.get("group_id")) != GROUP:
+            raise ConnectionError("QQ 尚未加入授权群")
     async with httpx.AsyncClient(trust_env=False, event_hooks={"request": [runtime.reserve]}) as client:
         model = DeepSeekClient(settings.deepseek, key, client, attempts=1)
         completion = await model.complete(

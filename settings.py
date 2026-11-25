@@ -105,10 +105,8 @@ class Settings(ConfigModel):
 
 
 def default_database_path() -> Path:
-    if os.name == "nt":
-        root = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-        return root / "FishbotV2Public" / "fishbot.db"
-    return Path.home() / ".local" / "share" / "fishbot-v2-public" / "fishbot.db"
+    from local_runtime import data_directory
+    return data_directory() / "fishbot.db"
 
 
 def read_toml(path: Path) -> dict:

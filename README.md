@@ -6,6 +6,25 @@
 
 ## 快速体验
 
+### Windows 双击启动和 QQ 登录
+
+无需 Codex，也不必先安装 WSL：双击项目目录的 `start.bat`。首次运行会在项目 `.venv` 中安装 `requirements.txt` 的依赖；需要已安装 Python 3.12 或更新版本（包含 Tcl/Tk 并加入 PATH）。安装失败可重试 `setup.bat`，已有环境和本地数据不会被删除。
+
+1. 在启动窗口点击“检测已有 NapCat”，或手动选择已有 NapCat 启动文件及 `webui.json`。支持检测麦麦一键包目录。选择 `webui.json` 后点击“读取已有 NapCat 配置”，可读取实际端口、唯一账号和正向 WS Token；检测不会改写 NapCat 文件，多个账号或 WS 服务需手动选择填写。
+2. 填写机器人 QQ 号、授权群号、OneBot 正向 WebSocket 地址与 Token、NapCat WebUI 地址。普通 Windows 部署常用端口为 3001/6099；旧 Docker 部署可能为 13001/16099，请以自己的配置为准。
+3. 点击“保存本机配置”，再点击“打开 QQ 扫码登录”。已有服务会被复用；尚未运行时启动所选 NapCat 文件。在 WebUI 登录管理后台后，进入 QQ 登录并扫码、手机确认。需要时点击“复制 WebUI 密码”；密码有变化时以 NapCat 最新配置/提示为准。
+4. 在 NapCat 网络配置启用“WebSocket 服务端（正向 WS）”，选择 `array` 消息格式；地址与 Token 应和启动窗口一致。此操作需在 NapCat 中确认，启动器不会覆盖现有网络设置。
+5. 点击“启动服务”，再“打开控制面板”。首次登录点击“复制面板访问令牌”，粘贴到面板即可，不必运行终端命令。
+6. 要启用真实回复，填写自己的 DeepSeek API Key 并保存/重启服务，然后点击“验证模型并启用回复”。该操作会核对 QQ 账号和群，并调用一次模型产生少量用量；通过后启用回复。扫码本身不会授予新的发送权限。以前已启用的回复权限会保留，可在面板暂停。
+
+关闭启动窗口会停止它启动的大肥鱼服务，不退出 QQ、不停止 NapCat。端口被其他进程占用时会报告，不强制结束进程。服务端口读取 `platforms.toml` 的 `server.port`。
+
+本机配置（包括密钥）保存在 `%LOCALAPPDATA%\FishbotV2Public\desktop.local.json`；数据库和面板令牌也在该用户目录，**不要上传或分享此目录**。`FISHBOT_DATA_DIR` 可为测试指定独立数据目录。显式环境变量优先于桌面配置，修改配置后重启服务生效。
+
+如果本机没有 NapCat，可从启动窗口打开[官方安装说明](https://napneko.icu/guide/boot/Shell)；QQ 扫码和必要的账号验证需本人操作。WebUI/OneBot 配置参考[官方说明](https://napneko.icu/config/basic.html)。程序不会自动安装 QQ、NapCat 或系统服务。
+
+原有 WSL 路线仍保留：设置 `FISHBOT_USE_WSL=1` 后运行 `start.ps1`/`stop.ps1`，沿用下面的 WSL 部署步骤。Windows 原生模式与 WSL 模式的数据目录各自独立。
+
 需要 Python 3.12。进入仓库目录后执行：
 
     python -m venv .venv
