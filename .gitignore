@@ -1,0 +1,93 @@
+# Python bytecode, test/tool caches and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.venv/
+venv/
+env/
+ENV/
+.coverage
+.coverage.*
+htmlcov/
+
+# Generated Python distributions
+/build/
+/dist/
+*.egg-info/
+
+# Logs, editor backups and local temporary files
+*.log
+*.log.*
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.tmp/
+/tmp/
+/temp/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local secrets. Keep sanitized environment templates available to Git.
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.*.sample
+!.env.template
+!.env.*.template
+
+# Explicit local-only configuration convention (not loaded automatically).
+*.local.json
+*.local.toml
+*.local.yaml
+*.local.yml
+!*.example.json
+!*.example.toml
+!*.example.yaml
+!*.example.yml
+
+# Actual runtime credentials used by panel.py and live_qq.py.
+# Normally stored outside the repository in the user's application data folder.
+panel.token
+panel.token.*
+qq-consumer.lock
+**/napcat/config/*.json
+!**/napcat/config/*.example.json
+!**/napcat/config/*.sample.json
+
+# Local cookie exports; do not hide arbitrary JSON or static assets.
+cookies.txt
+cookies.json
+cookies.sqlite
+cookies.sqlite-*
+
+# Runtime SQLite databases (including chats and Douyin credentials) and sidecars.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Preserve intentionally supplied example data and test fixtures.
+!examples/**/*.db
+!examples/**/*.sqlite
+!examples/**/*.sqlite3
+!tests/fixtures/**/*.db
+!tests/fixtures/**/*.sqlite
+!tests/fixtures/**/*.sqlite3
