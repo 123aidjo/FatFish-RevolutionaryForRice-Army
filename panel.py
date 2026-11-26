@@ -125,6 +125,9 @@ def create_app(
     from role_profiles import config_directory
     config_dir = config_dir or config_directory()
     directory = data_dir or store.path.parent
+    from role_profiles import active_id
+    role_id = active_id()
+    session_cookie = SESSION_COOKIE if role_id == 'default' else SESSION_COOKIE + '_' + role_id
     image_dir = directory / "stickers"
     config = PanelConfig(store, config_dir, directory)
     runtime_lock = asyncio.Lock()
@@ -181,7 +184,8 @@ def create_app(
         if not ready:
             response.status_code = 503
         return {"service": "fishbot-v2-public", "status": "ok" if ready else "unavailable",
-                "database": "ok" if ready else "unavailable"}
+                "database": "ok" if ready else "unavailable",
+                **({'instance':os.environ['FISHBOT_SERVICE_INSTANCE']} if os.getenv('FISHBOT_SERVICE_INSTANCE') else {})}
 
     @app.get("/")
     def index():
@@ -212,7 +216,7 @@ def create_app(
         verify_origin(request)
         if bearer_valid(request):
             return
-        value = request.cookies.get(SESSION_COOKIE, "")
+        value = request.cookies.get(session_cookie, "")
         if re.fullmatch(r"[A-Za-z0-9_-]{43}", value):
             with closing(store.open_read()) as db:
                 entry = db.execute("SELECT value FROM panel_state WHERE key=?", (session_key(value),)).fetchone()
@@ -227,14 +231,14 @@ def create_app(
             raise error(401, "请输入有效的本机访问令牌")
         now = int(time.time())
         value = secrets.token_urlsafe(32)
-        old = request.cookies.get(SESSION_COOKIE)
+        old = request.cookies.get(session_cookie)
         with store.transaction() as db:
             db.execute("DELETE FROM panel_state WHERE key LIKE ? AND CAST(value AS INTEGER)<=?",
                        (SESSION_PREFIX + "%", now))
             if old:
                 db.execute("DELETE FROM panel_state WHERE key=?", (session_key(old),))
             db.execute("INSERT INTO panel_state VALUES (?,?)", (session_key(value), str(now + SESSION_SECONDS)))
-        response.set_cookie(SESSION_COOKIE, value, httponly=True, samesite="strict",
+        response.set_cookie(session_cookie, value, httponly=True, samesite="strict",
                             max_age=SESSION_SECONDS, path="/api")
         return {"ok": True}
 
@@ -242,11 +246,11 @@ def create_app(
 
     @api.delete("/session")
     def end_session(request: Request, response: Response):
-        value = request.cookies.get(SESSION_COOKIE)
+        value = request.cookies.get(session_cookie)
         if value:
             with store.transaction() as db:
                 db.execute("DELETE FROM panel_state WHERE key=?", (session_key(value),))
-        response.delete_cookie(SESSION_COOKIE, path="/api", httponly=True, samesite="strict")
+        response.delete_cookie(session_cookie, path="/api", httponly=True, samesite="strict")
         return {"ok": True}
 
     def current():

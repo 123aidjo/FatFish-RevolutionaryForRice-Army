@@ -11,10 +11,11 @@ import subprocess
 import sys
 import time
 import tomllib
+from uuid import uuid4
 from urllib.parse import urlsplit
 
 from local_runtime import data_directory, read_config, save_config, validate
-from role_profiles import Profiles, PRESETS, active_id, config_directory, child_environment, switch_service
+from role_profiles import Profiles, PRESETS, active_id, config_directory, child_environment
 
 PROJECT = Path(__file__).resolve().parent
 NAPCAT_GUIDE = "https://napneko.icu/guide/boot/Shell"
@@ -116,10 +117,21 @@ def import_napcat_config(path: Path, values: dict) -> dict:
 
 
 class Service:
-    def __init__(self):
+    def __init__(self, profile_id=None, before_start=None):
+        self.profile_id = profile_id
+        self.before_start = before_start
         self.process = None
-        self.port = panel_port()
-        self.log = data_directory() / "launcher" / "native-server.log"
+        self.port = self.configured_port()
+        self.log = self.directory() / "launcher" / "native-server.log"
+
+    def directory(self):
+        return Profiles().data(self.profile_id) if self.profile_id else data_directory()
+
+    def configured_port(self):
+        if self.profile_id is None:
+            return panel_port()
+        from settings import load_settings
+        return load_settings(Profiles().config(self.profile_id),database_path=self.directory()/'fishbot.db').server.port
 
     @property
     def url(self):
@@ -131,17 +143,31 @@ class Service:
     def start(self):
         if self.running():
             return "服务已运行。"
-        self.port = panel_port()
-        self.log = data_directory() / "launcher" / "native-server.log"
+        if self.before_start:
+            self.before_start()
+        self.port = self.configured_port()
+        self.log = self.directory() / "launcher" / "native-server.log"
+        if self.profile_id is not None:
+            with socket.socket() as candidate:
+                if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+                    candidate.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                try:
+                    candidate.bind(('127.0.0.1', self.port))
+                except OSError:
+                    candidate.bind(('127.0.0.1', 0))
+                self.port = candidate.getsockname()[1]
         with socket.socket() as probe:
             probe.settimeout(1)
             if probe.connect_ex(("127.0.0.1", self.port)) == 0:
                 raise ValueError(f"端口 {self.port} 已被使用。请先停止原服务，或修改 platforms.toml 的端口。未终止任何现有进程。")
         self.log.parent.mkdir(parents=True, exist_ok=True)
+        environment = child_environment(self.profile_id)
+        instance = uuid4().hex
+        environment.update(FISHBOT_PANEL_PORT=str(self.port), FISHBOT_SERVICE_INSTANCE=instance)
         with self.log.open("ab") as output:
             self.process = subprocess.Popen(
                 [sys.executable, "-X", "utf8", str(PROJECT / "desktop_worker.py")], cwd=PROJECT,
-                stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=child_environment(),
+                stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=environment,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         try:
@@ -154,7 +180,8 @@ class Service:
                     conn.request("GET", "/health")
                     response = conn.getresponse()
                     payload = json.loads(response.read(2048))
-                    if response.status == 200 and payload.get("service") == "fishbot-v2-public" and payload.get("database") == "ok":
+                    if (response.status == 200 and payload.get("service") == "fishbot-v2-public"
+                            and payload.get("database") == "ok" and payload.get('instance') == instance):
                         return "服务已启动。首次进入面板请复制访问令牌，QQ 登录请按下方步骤操作。"
                 except (OSError, ValueError, http.client.HTTPException):
                     pass
@@ -178,6 +205,51 @@ class Service:
         return "本窗口启动的服务已停止；NapCat 保持原状。"
 
 
+class RoleServices:
+    """One independently owned process per role; selecting a role never stops it."""
+    def __init__(self):
+        self.services = {}
+        self.connections = {}
+
+    def get(self, identifier):
+        Profiles().data(identifier)
+        if identifier not in self.services:
+            self.services[identifier] = Service(identifier, lambda: self.check_connection(identifier))
+        return self.services[identifier]
+
+    def check_connection(self, identifier):
+        path = Profiles().data(identifier)/'desktop.local.json'
+        config = validate(json.loads(path.read_text(encoding='utf-8'))) if path.exists() else {}
+        environment = child_environment(identifier)
+        if identifier == 'default':
+            for key, variable in (('qq_bot_id','FISHBOT_QQ_BOT_ID'), ('onebot_url','FISHBOT_ONEBOT_URL')):
+                if environment.get(variable):
+                    config[key] = environment[variable]
+        bot = config.get('qq_bot_id', '')
+        endpoint = config.get('onebot_url', '')
+        for other, service in list(self.services.items()):
+            if other == identifier or not service.running():
+                continue
+            previous = self.connections.get(other, {})
+            if bot and previous.get('qq_bot_id') and (previous['qq_bot_id'] == bot or previous.get('onebot_url') == endpoint):
+                raise ValueError('另一个运行中的角色使用相同 QQ 账号或 OneBot 连接。请分别配置，避免重复接收和回复。')
+        self.connections[identifier] = config
+
+    def running(self):
+        return [(key,service) for key,service in list(self.services.items()) if service.running()]
+
+    def stop_all(self):
+        failures = []
+        for key, service in list(self.services.items()):
+            try:
+                service.stop()
+            except Exception:
+                failures.append(key)
+        if failures:
+            raise ValueError('部分角色尚未退出，请稍后再次停止；未强制结束进程。')
+        return '所有本窗口启动的角色已停止；外部 QQ 服务保持原状。'
+
+
 def show():
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk, simpledialog
@@ -197,7 +269,8 @@ def show():
     profiles = Profiles()
     profiles.initialize()
     os.environ["FISHBOT_PROFILE_ID"] = profiles.read()["active"]
-    service = Service()
+    services = RoleServices()
+    service = services.get(active_id())
     pool = ThreadPoolExecutor(max_workers=1)
     pending = None
     callback = None
@@ -243,6 +316,8 @@ def show():
                 messagebox.showerror("操作未完成", text)
         try:
             if root.winfo_exists():
+                names = profiles.read()['roles']
+                running_roles.set('\n'.join(names[key]+' · '+item.url for key,item in services.running()) or '暂无运行中的角色')
                 root.after(150, poll)
         except tk.TclError:
             pass
@@ -309,9 +384,11 @@ def show():
                 pass
         root.after(60000, clear)
 
-    role_box = ttk.LabelFrame(frame, text="角色空间 · 切换会保存当前启动配置", padding=8)
+    role_box = ttk.LabelFrame(frame, text="角色空间 · 支持多个角色同时运行", padding=8)
     role_box.pack(fill="x", pady=8)
     role_label = tk.StringVar()
+    running_roles = tk.StringVar(value='暂无运行中的角色')
+    ttk.Label(role_box, textvariable=running_roles).pack(anchor='w', pady=4)
     selected_role = tk.StringVar()
     ttk.Label(role_box, textvariable=role_label).pack(anchor="w")
     picker = ttk.Combobox(role_box, textvariable=selected_role, state="readonly")
@@ -324,6 +401,8 @@ def show():
         role_label.set("当前角色：" + data['roles'][active_id()])
 
     def switched(message):
+        nonlocal service
+        service = services.get(active_id())
         for key, value in read_config().items():
             values[key].set(value)
         root.clipboard_clear()
@@ -334,7 +413,16 @@ def show():
         try:
             identifier = next(k for k,v in profiles.read()['roles'].items() if v == selected_role.get())
             saved = validate({key:value.get() for key,value in values.items()})
-            run(lambda: switch_service(service, identifier, profiles, lambda: save_config(saved)), switched)
+            if saved != read_config():
+                if service.running():
+                    messagebox.showinfo('配置尚未保存', '当前角色有未保存配置，请先停止该角色并保存，再切换管理对象。')
+                    return
+                save_config(saved)
+            from settings import load_settings
+            load_settings(profiles.config(identifier), database_path=profiles.data(identifier)/'fishbot.db')
+            profiles.activate(identifier)
+            os.environ['FISHBOT_PROFILE_ID'] = identifier
+            switched('已切换管理角色，其他角色保持运行。需要时点击“启动服务”。')
         except (ValueError, StopIteration):
             messagebox.showerror("无法切换", "请检查角色选择和当前启动配置。")
 
@@ -355,7 +443,7 @@ def show():
                 refresh_roles()
                 selected_role.set(profiles.read()['roles'][identifier])
                 dialog.destroy()
-                status.set('角色已保存；点击“一键切换角色”进入，账号和模型密钥需单独配置。')
+                status.set('角色已保存；点击“切换管理角色”进入，账号和模型密钥需单独配置。')
             except ValueError as exc:
                 messagebox.showerror('创建失败',str(exc),parent=dialog)
         ttk.Button(dialog,text="保存角色",command=create).pack(pady=10)
@@ -370,7 +458,7 @@ def show():
                 messagebox.showerror('重命名失败',str(exc))
 
     role_actions = ttk.Frame(role_box); role_actions.pack(fill="x")
-    button(role_actions,"一键切换角色",choose_role)
+    button(role_actions,"切换管理角色（保持运行）",choose_role)
     button(role_actions,"新建角色 / 预设",create_role)
     button(role_actions,"重命名当前角色",rename_role)
     refresh_roles()
@@ -381,6 +469,7 @@ def show():
     button(actions, "打开控制面板", open_panel)
     button(actions, "复制面板访问令牌", copy_secret)
     button(actions, "停止服务", lambda: run(service.stop))
+    button(actions, "停止所有角色", lambda: run(services.stop_all))
     button(actions, "查看服务日志", lambda: os.startfile(str(service.log)) if service.log.exists()
            else messagebox.showinfo("日志", "尚未生成服务日志。"))
 
@@ -484,15 +573,15 @@ def show():
     button(qq_actions, "验证模型并启用回复", verify)
     button(qq_actions, "查看 QQ 状态", lambda: os.startfile(service.url + "#platforms") if service.running()
            else messagebox.showinfo("服务未启动", "请先启动服务。"))
-    ttk.Label(frame, text="关闭此窗口会停止它启动的大肥鱼服务；不会退出 QQ 或停止 NapCat。", wraplength=820).pack(anchor="w", pady=8)
+    ttk.Label(frame, text="选择角色后可单独启动、停止、打开面板和查看日志。关闭窗口会停止全部角色；不会退出 QQ 或停止 NapCat。", wraplength=820).pack(anchor="w", pady=8)
 
     def close():
         if pending is not None:
             messagebox.showinfo("正在处理", "请等待当前操作结束后再关闭。")
             return
-        if service.running() and not messagebox.askyesno("退出大肥鱼", "关闭窗口并停止本窗口启动的服务？"):
+        if services.running() and not messagebox.askyesno("退出大肥鱼", "关闭窗口并停止本窗口启动的全部角色？"):
             return
-        run(service.stop, lambda _: (pool.shutdown(wait=False), root.destroy()))
+        run(services.stop_all, lambda _: (pool.shutdown(wait=False), root.destroy()))
 
     root.protocol("WM_DELETE_WINDOW", close)
     root.after(150, poll)

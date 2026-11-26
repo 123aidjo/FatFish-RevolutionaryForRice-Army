@@ -130,10 +130,10 @@ def isolated():
     return active_id() != 'default'
 
 
-def child_environment():
+def child_environment(identifier=None):
     from local_runtime import ENVIRONMENT
     env = dict(os.environ)
-    identifier = active_id()
+    identifier = identifier or active_id()
     env['FISHBOT_PROFILE_ID'] = identifier
     if identifier != 'default':
         # No inherited default-role login, owner policy, model or visual credentials.
@@ -141,6 +141,39 @@ def child_environment():
             if key in ENVIRONMENT.values() or key.startswith(('FISHBOT_QQ_', 'FISHBOT_ONEBOT_', 'FISHBOT_NAPCAT_', 'FISHBOT_VISION_')):
                 env.pop(key,None)
     return env
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def worker_lock():
+    """OS-released per-role lock, also covering independent command-line launches."""
+    from local_runtime import data_directory
+    path = data_directory()/'role-worker.lock'
+    path.parent.mkdir(parents=True,exist_ok=True)
+    with path.open('a+b') as stream:
+        stream.seek(0,2)
+        if stream.tell()==0:
+            stream.write(b'0'); stream.flush()
+        stream.seek(0)
+        try:
+            if os.name=='nt':
+                import msvcrt
+                msvcrt.locking(stream.fileno(),msvcrt.LK_NBLCK,1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except OSError:
+            raise ValueError('该角色已有服务运行，不能重复启动。') from None
+        try:
+            yield
+        finally:
+            stream.seek(0)
+            if os.name=='nt':
+                msvcrt.locking(stream.fileno(),msvcrt.LK_UNLCK,1)
+            else:
+                fcntl.flock(stream.fileno(),fcntl.LOCK_UN)
 
 
 def switch_service(service, identifier, manager=None, save_current=None):

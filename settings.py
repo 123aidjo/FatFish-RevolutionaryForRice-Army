@@ -125,4 +125,7 @@ def load_settings(config_dir: Path | None = None, *, database_path: Path | None 
     })
     if settings.platforms.keys() != set(PLATFORMS):
         raise ValueError("平台配置必须包含 qq、bilibili、douyin")
+    port = os.getenv("FISHBOT_PANEL_PORT")
+    if port:
+        settings = settings.model_copy(update={"server": ServerSettings(port=int(port))})
     return settings

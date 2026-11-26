@@ -32,4 +32,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from role_profiles import worker_lock
+    with worker_lock():
+        main()

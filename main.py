@@ -39,8 +39,10 @@ def main() -> None:
         print(panel_token(store, store.path.parent))
         return
     app = create_app(store, live_qq=LiveQQ(store))
-    uvicorn.run(app, host="127.0.0.1", port=settings.server.port,
-                log_level=settings.log_level.lower(), proxy_headers=False, access_log=False)
+    from role_profiles import worker_lock
+    with worker_lock():
+        uvicorn.run(app, host="127.0.0.1", port=settings.server.port,
+                    log_level=settings.log_level.lower(), proxy_headers=False, access_log=False)
 
 
 if __name__ == "__main__":
