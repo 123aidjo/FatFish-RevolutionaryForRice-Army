@@ -197,7 +197,7 @@ def show():
     pending = None
     callback = None
     controls = []
-    status = tk.StringVar(value="填写本机配置后保存，点击启动服务。已有 NapCat 可直接复用。")
+    status = tk.StringVar(value="填写账号和群号后保存。项目自带 NapCat 时已自动选择，无需查找路径。")
     try:
         config = read_config()
     except (OSError, ValueError) as exc:

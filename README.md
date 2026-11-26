@@ -8,6 +8,12 @@
 
 ### Windows 双击启动和 QQ 登录
 
+**带 NapCat 整包：**解压 `Fatfish-Windows-with-NapCat.zip` 后双击 `start.bat`。NapCat、Node 和所需运行库位于项目的 `runtime/napcat`，启动窗口会自动使用该目录，不必查找麦麦或其他安装路径。首次使用生成独立的本机 Token，默认 WebUI/OneBot 端口为 16099/13001；请重新扫码登录，旧登录态不会打包。
+
+Git 仓库只管理源码及打包工具；约 250 MB 的第三方运行文件及生成的数据不入 Git。另一位开发者需获取本地生成的整包，而不仅是 git clone。整包仍需 Python 3.12+（含 Tcl/Tk），Python 依赖由首次启动自动安装。已安装包更新源码后，可运行 `.venv\Scripts\python.exe package_runtime.py --bundle` 重新生成 `dist/Fatfish-Windows-with-NapCat.zip`，旧整包存在时不会覆盖。不要手工压缩运行过的整个 runtime 目录，因为它可能包含登录凭据和个人数据。
+
+运行包包含第三方 NapCat、Node 和 QQ 运行文件，附带许可文件保持原样；这些文件不适用本项目的开源许可证。当前只生成本地运行包，未向 GitHub 上传第三方二进制。
+
 无需 Codex，也不必先安装 WSL：双击项目目录的 `start.bat`。首次运行会在项目 `.venv` 中安装 `requirements.txt` 的依赖；需要已安装 Python 3.12 或更新版本（包含 Tcl/Tk 并加入 PATH）。安装失败可重试 `setup.bat`，已有环境和本地数据不会被删除。
 
 1. 在启动窗口点击“检测已有 NapCat”，或手动选择已有 NapCat 启动文件及 `webui.json`。支持检测麦麦一键包目录。选择 `webui.json` 后点击“读取已有 NapCat 配置”，可读取实际端口、唯一账号和正向 WS Token；检测不会改写 NapCat 文件，多个账号或 WS 服务需手动选择填写。

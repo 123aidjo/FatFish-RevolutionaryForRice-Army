@@ -62,10 +62,13 @@ def validate(values: dict) -> dict:
 
 def read_config() -> dict:
     path = data_directory() / "desktop.local.json"
-    if not path.exists():
-        return dict(DEFAULTS)
     try:
-        return validate(json.loads(path.read_text(encoding="utf-8-sig")))
+        values = validate(json.loads(path.read_text(encoding="utf-8-sig"))) if path.exists() else dict(DEFAULTS)
+        # Explicit isolated data directories and legacy WSL deployments remain independent.
+        if not os.getenv("FISHBOT_DATA_DIR") and os.getenv("FISHBOT_USE_WSL") != "1":
+            from bundled_runtime import settings
+            values.update(settings(Path(__file__).resolve().parent))
+        return validate(values)
     except (ValueError, TypeError):
         raise ValueError("本地启动配置无效，请检查 desktop.local.json；未覆盖原文件。") from None
 
@@ -87,7 +90,9 @@ def save_config(values: dict) -> None:
 
 def apply_environment() -> None:
     # Existing command-line/WSL environment always wins over desktop defaults.
-    if not (data_directory() / "desktop.local.json").exists():
+    bundled = Path(__file__).resolve().parent / "runtime/napcat/node.exe"
+    if not (data_directory() / "desktop.local.json").exists() and (
+            not bundled.is_file() or os.getenv("FISHBOT_DATA_DIR") or os.getenv("FISHBOT_USE_WSL") == "1"):
         return
     for key, value in read_config().items():
         if key in ENVIRONMENT and value:

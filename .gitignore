@@ -18,6 +18,7 @@ htmlcov/
 # Generated Python distributions
 /build/
 /dist/
+/runtime/
 *.egg-info/
 
 # Logs, editor backups and local temporary files
