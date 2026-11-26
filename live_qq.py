@@ -70,7 +70,9 @@ def read_key(directory: Path) -> str:
     configured = os.environ.get("DEEPSEEK_API_KEY", "").strip()
     if configured:
         return configured
-    for path in (directory / ".env", Path(__file__).parent / ".env"):
+    from role_profiles import isolated
+    paths = (directory / ".env",) if isolated() else (directory / ".env", Path(__file__).parent / ".env")
+    for path in paths:
         if path.is_file():
             for line in path.read_text(encoding="utf-8-sig").splitlines():
                 name, separator, value = line.partition("=")

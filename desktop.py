@@ -14,13 +14,14 @@ import tomllib
 from urllib.parse import urlsplit
 
 from local_runtime import data_directory, read_config, save_config, validate
+from role_profiles import Profiles, PRESETS, active_id, config_directory, child_environment, switch_service
 
 PROJECT = Path(__file__).resolve().parent
 NAPCAT_GUIDE = "https://napneko.icu/guide/boot/Shell"
 
 
 def panel_port():
-    with (PROJECT / "platforms.toml").open("rb") as stream:
+    with (config_directory(PROJECT) / "platforms.toml").open("rb") as stream:
         port = tomllib.load(stream).get("server", {}).get("port", 8000)
     if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError("platforms.toml 中的 server.port 无效。")
@@ -131,6 +132,7 @@ class Service:
         if self.running():
             return "服务已运行。"
         self.port = panel_port()
+        self.log = data_directory() / "launcher" / "native-server.log"
         with socket.socket() as probe:
             probe.settimeout(1)
             if probe.connect_ex(("127.0.0.1", self.port)) == 0:
@@ -139,7 +141,7 @@ class Service:
         with self.log.open("ab") as output:
             self.process = subprocess.Popen(
                 [sys.executable, "-X", "utf8", str(PROJECT / "desktop_worker.py")], cwd=PROJECT,
-                stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=child_environment(),
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         try:
@@ -178,7 +180,7 @@ class Service:
 
 def show():
     import tkinter as tk
-    from tkinter import filedialog, messagebox, ttk
+    from tkinter import filedialog, messagebox, ttk, simpledialog
 
     if os.name == "nt":
         import ctypes
@@ -192,6 +194,9 @@ def show():
     root.minsize(700, 500)
     root.report_callback_exception = lambda *_: messagebox.showerror(
         "操作失败", "无法完成此操作，请检查文件是否存在以及系统默认浏览器/文件关联。")
+    profiles = Profiles()
+    profiles.initialize()
+    os.environ["FISHBOT_PROFILE_ID"] = profiles.read()["active"]
     service = Service()
     pool = ThreadPoolExecutor(max_workers=1)
     pending = None
@@ -304,6 +309,72 @@ def show():
                 pass
         root.after(60000, clear)
 
+    role_box = ttk.LabelFrame(frame, text="角色空间 · 切换会保存当前启动配置", padding=8)
+    role_box.pack(fill="x", pady=8)
+    role_label = tk.StringVar()
+    selected_role = tk.StringVar()
+    ttk.Label(role_box, textvariable=role_label).pack(anchor="w")
+    picker = ttk.Combobox(role_box, textvariable=selected_role, state="readonly")
+    picker.pack(fill="x")
+
+    def refresh_roles():
+        data = profiles.read()
+        picker.configure(values=list(data['roles'].values()))
+        selected_role.set(data['roles'][active_id()])
+        role_label.set("当前角色：" + data['roles'][active_id()])
+
+    def switched(message):
+        for key, value in read_config().items():
+            values[key].set(value)
+        root.clipboard_clear()
+        refresh_roles()
+        status.set(message)
+
+    def choose_role():
+        try:
+            identifier = next(k for k,v in profiles.read()['roles'].items() if v == selected_role.get())
+            saved = validate({key:value.get() for key,value in values.items()})
+            run(lambda: switch_service(service, identifier, profiles, lambda: save_config(saved)), switched)
+        except (ValueError, StopIteration):
+            messagebox.showerror("无法切换", "请检查角色选择和当前启动配置。")
+
+    def create_role():
+        dialog = tk.Toplevel(root)
+        dialog.title("新建独立角色")
+        dialog.transient(root)
+        dialog.grab_set()
+        ttk.Label(dialog,text="名称（不会复制聊天、记忆或账号凭据）").pack(padx=16,pady=6)
+        name = ttk.Entry(dialog,width=48); name.pack(padx=16)
+        preset = ttk.Combobox(dialog,values=list(PRESETS),state="readonly",width=45)
+        preset.set('默认风格'); preset.pack(padx=16,pady=6)
+        ttk.Label(dialog,text="自定义人设（可留空使用预设，之后可在面板修改）").pack()
+        prompt = tk.Text(dialog,width=55,height=8); prompt.pack(padx=16,pady=6)
+        def create():
+            try:
+                identifier = profiles.create(name.get(),preset.get(),prompt.get('1.0','end').strip() or None)
+                refresh_roles()
+                selected_role.set(profiles.read()['roles'][identifier])
+                dialog.destroy()
+                status.set('角色已保存；点击“一键切换角色”进入，账号和模型密钥需单独配置。')
+            except ValueError as exc:
+                messagebox.showerror('创建失败',str(exc),parent=dialog)
+        ttk.Button(dialog,text="保存角色",command=create).pack(pady=10)
+
+    def rename_role():
+        name = simpledialog.askstring('重命名角色空间','新名称（人设中的角色名请在面板单独编辑）：',parent=root)
+        if name is not None:
+            try:
+                profiles.rename(active_id(),name)
+                refresh_roles()
+            except ValueError as exc:
+                messagebox.showerror('重命名失败',str(exc))
+
+    role_actions = ttk.Frame(role_box); role_actions.pack(fill="x")
+    button(role_actions,"一键切换角色",choose_role)
+    button(role_actions,"新建角色 / 预设",create_role)
+    button(role_actions,"重命名当前角色",rename_role)
+    refresh_roles()
+
     actions = ttk.Frame(frame)
     actions.pack(fill="x")
     button(actions, "启动服务", start)
@@ -399,7 +470,7 @@ def show():
             return
         def task():
             result = subprocess.run([sys.executable, "-X", "utf8", "live_qq.py", "verify"], cwd=PROJECT,
-                                    capture_output=True, timeout=90,
+                                    capture_output=True, timeout=90, env=child_environment(),
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if result.returncode:
                 raise ValueError("验证未通过。请检查 QQ 已登录、机器人在授权群、OneBot 地址及 Token、模型密钥和余额。未授予新的回复权限。")

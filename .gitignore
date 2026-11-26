@@ -19,6 +19,8 @@ htmlcov/
 /build/
 /dist/
 /runtime/
+# Role-private config copies if an explicit data root is placed inside the repository.
+roles/
 *.egg-info/
 
 # Logs, editor backups and local temporary files

@@ -119,9 +119,11 @@ def activate_logging(level: str) -> None:
 
 
 def create_app(
-    store: Store, *, config_dir: Path = PROJECT_ROOT, data_dir: Path | None = None,
+    store: Store, *, config_dir: Path | None = None, data_dir: Path | None = None,
     live_qq=None, douyin_client=None, douyin_model=None, bili_sources=None, bili_model=None, bili_vision=None,
 ) -> FastAPI:
+    from role_profiles import config_directory
+    config_dir = config_dir or config_directory()
     directory = data_dir or store.path.parent
     image_dir = directory / "stickers"
     config = PanelConfig(store, config_dir, directory)

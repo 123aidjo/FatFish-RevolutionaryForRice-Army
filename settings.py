@@ -114,7 +114,9 @@ def read_toml(path: Path) -> dict:
         return tomllib.load(source)
 
 
-def load_settings(config_dir: Path = PROJECT_ROOT, *, database_path: Path | None = None) -> Settings:
+def load_settings(config_dir: Path | None = None, *, database_path: Path | None = None) -> Settings:
+    from role_profiles import config_directory
+    config_dir = config_dir or config_directory()
     config = read_toml(config_dir / "platforms.toml")
     settings = Settings.model_validate({
         **config,

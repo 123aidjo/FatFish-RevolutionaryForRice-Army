@@ -6,6 +6,11 @@ from tempfile import TemporaryDirectory
 
 import uvicorn
 
+if __name__ == "__main__":
+    import os
+    from role_profiles import active_id
+    os.environ["FISHBOT_PROFILE_ID"] = active_id()
+
 from live_qq import LiveQQ
 from panel import create_app, panel_token
 from settings import load_settings
