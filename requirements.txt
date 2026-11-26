@@ -7,3 +7,5 @@ pytest>=8.3,<10
 Pillow>=12,<13
 tomli-w>=1.2,<2
 websockets>=15,<17
+bilibili-api-python==17.4.2
+imageio-ffmpeg>=0.6,<1

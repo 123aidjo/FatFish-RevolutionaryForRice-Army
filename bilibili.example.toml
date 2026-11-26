@@ -1,0 +1,23 @@
+# Public defaults for the panel's BrowseSettings. This is a reference template,
+# not an automatically loaded credential/config file. Save changes in B站浏览.
+enabled = false
+rounds_per_day = 1
+recommended = 3
+searched = 3
+visual = 0
+candidate_limit = 10
+max_duration = 1800
+material_chars = 2400
+windows = ["00:00-09:00", "12:00-14:00", "18:00-24:00"]
+weekend_all_day = true
+exploration = "从近期真实经历中发现一个尚不了解的新问题"
+requests_per_day = 8
+tokens_per_day = 60000
+visual_per_day = 1
+visual_token_reserve = 16000
+max_output_tokens = 1600
+timeout_seconds = 90
+share_preview = false
+share_interest = 0.65
+share_per_day = 1
+share_interval_seconds = 21600

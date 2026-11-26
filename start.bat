@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 if not exist ".venv\Scripts\python.exe" goto setup
-".venv\Scripts\python.exe" -c "import tkinter, fastapi, uvicorn, httpx, PIL, tomli_w, websockets" >nul 2>nul
+".venv\Scripts\python.exe" -c "import tkinter, fastapi, uvicorn, httpx, PIL, tomli_w, websockets, bilibili_api, imageio_ffmpeg" >nul 2>nul
 if errorlevel 1 goto setup
 goto launch
 :setup

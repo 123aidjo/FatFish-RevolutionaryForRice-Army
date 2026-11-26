@@ -20,6 +20,7 @@ from pydantic import Field
 
 from adapter_base import Platform
 from douyin_panel import mount_douyin
+from bilibili_panel import BrowseRuntime, mount_bilibili
 from panel_config import ConfigConflict, NoBackup, PanelConfig, atomic_write
 from panel_data import PanelData, reason_label
 from panel_images import InvalidImage, MAX_BYTES, import_image
@@ -119,7 +120,7 @@ def activate_logging(level: str) -> None:
 
 def create_app(
     store: Store, *, config_dir: Path = PROJECT_ROOT, data_dir: Path | None = None,
-    live_qq=None, douyin_client=None, douyin_model=None,
+    live_qq=None, douyin_client=None, douyin_model=None, bili_sources=None, bili_model=None, bili_vision=None,
 ) -> FastAPI:
     directory = data_dir or store.path.parent
     image_dir = directory / "stickers"
@@ -129,6 +130,8 @@ def create_app(
                                     live_qq.key() if live_qq else os.environ.get("DEEPSEEK_API_KEY", "")))
     cognition = CognitiveStore(store)
     demo_memory = DemoMemory()
+    browsing = BrowseRuntime(store, directory, lambda: config.read().settings,
+                             bili_sources, bili_model, bili_vision)
 
     def observe_persona(snapshot):
         persona = snapshot.settings.persona
@@ -139,12 +142,13 @@ def create_app(
         store.initialize()
         app.state.token = panel_token(store, directory)
         try:
-            if live_qq is None:
-                yield
-            else:
-                observe_persona(config.read())
-                async with live_qq.running():
+            async with browsing.running():
+                if live_qq is None:
                     yield
+                else:
+                    observe_persona(config.read())
+                    async with live_qq.running():
+                        yield
         finally:
             demo_memory.close()
 
@@ -521,6 +525,7 @@ def create_app(
             store.record_panel_action(db, payload.action)
         return {"mode": "simulation", "paused": paused}
 
+    mount_bilibili(api, browsing)
     mount_douyin(app, api, directory, lambda: current().settings,
                  lambda: live_qq.key() if live_qq else os.environ.get("DEEPSEEK_API_KEY", "").strip(),
                  client=douyin_client, model=douyin_model)

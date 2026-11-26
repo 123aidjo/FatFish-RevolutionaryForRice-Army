@@ -14,6 +14,7 @@ const titles = {
   stickers: ["表情包", "管理 V2 图片、情绪和使用场景。"],
   messages: ["消息日志", "查看 SQLite 中的消息和发送结果。时间按当前浏览器时区显示。"],
   settings: ["系统设置", "管理发送上限、模型参数和日志级别。"],
+  bilibili: ["B 站浏览", "按时段阅读真实字幕与摘要，形成经历和动态兴趣。"],
   "douyin-account": ["抖音账号", "查看应用配置、账号授权和权限。"],
   "douyin-drafts": ["内容工作台", "编写、生成和保存抖音短视频草稿。"],
 };
@@ -771,7 +772,72 @@ async function douyinDrafts(root) {
   root.append(work, editor, library, usage);
 }
 
-const pages = {overview, platforms, persona,
+async function bilibili(root) {
+  const data = await request('/bilibili');
+  const status = card('浏览状态');
+  status.append(row('账号凭据', data.credential_saved ? '本机已保存（有效性以实际读取为准）' : '未登录'),
+    row('今日轮次', String(data.today_rounds) + '/' + data.config.rounds_per_day),
+    row('模型预算', `${data.usage.requests} 次请求 / ${data.usage.tokens} 预留 Token / ${data.usage.visual} 次视觉`),
+    row('运行状态', data.running ? '正在浏览' : data.worker_alive ? '后台每 30 秒检查' : '后台异常，请重启并检查'),
+    row('视觉模型', data.vision_ready ? '已配置，实际调用时验证' : '未配置，文字浏览仍可使用'));
+  const login = action('生成登录二维码');
+  const check = action('我已扫码，检查登录');
+  const once = action('检查并浏览一轮');
+  const qr = node('div');
+  login.onclick = () => perform(login, async () => {
+    await request('/bilibili/login', {method:'POST'});
+    const blob = await request('/bilibili/login/image', {blob:true});
+    const url = URL.createObjectURL(blob); previews.push(url);
+    const image = node('img'); image.src = url; image.alt = '请使用哔哩哔哩客户端扫码登录'; image.width = 220;
+    qr.replaceChildren(image);
+  }, '请用 B 站客户端扫码，然后点击检查登录。', false);
+  check.onclick = () => perform(check, () => request('/bilibili/login/check', {method:'POST'}),
+    r => ({connected:'登录成功',waiting:'等待扫码',confirming:'请在手机上确认',expired:'二维码已过期，请重新生成'})[r.state] || '登录暂不可用', false);
+  once.onclick = () => perform(once, () => request('/bilibili/run', {method:'POST'}), '任务已受理，稍后点击刷新查看结果。');
+  status.append(block(login, check, once), qr);
+  root.append(status);
+  const form = node('form', '', 'card');
+  form.append(node('h2', '浏览设置'), node('p', '手动与后台共用时段和每日额度；失败、中断不退还额度。保存后 30 秒内生效。关闭浏览不打断已开始的一轮。'));
+  const fields = {};
+  const labels = {enabled:'开启自动浏览',rounds_per_day:'每日轮数',recommended:'每轮推荐（最多3）',searched:'每轮搜索（最多3）',
+    visual:'每轮视觉（0或1）',max_duration:'最长视频（秒）',windows:'北京时间段（逗号分隔）',weekend_all_day:'周末全天',
+    exploration:'探索方向',requests_per_day:'每日模型请求上限',tokens_per_day:'每日预留Token上限',
+    visual_per_day:'每日视觉上限',share_preview:'生成分享预览（不发送 QQ）'};
+  for (const [key, label] of Object.entries(labels)) {
+    const input = node('input'); const value = data.config[key];
+    input.type = typeof value === 'boolean' ? 'checkbox' : typeof value === 'number' ? 'number' : 'text';
+    if (input.type === 'checkbox') input.checked = value;
+    else input.value = Array.isArray(value) ? value.join(', ') : value;
+    fields[key] = input; const wrap = node('label', label); wrap.append(input); form.append(wrap);
+  }
+  const save = node('button', '保存设置', 'primary'); save.type = 'submit'; form.append(save);
+  form.onsubmit = e => { e.preventDefault(); const config = {...data.config};
+    for (const [key,input] of Object.entries(fields)) config[key] = input.type === 'checkbox' ? input.checked :
+      input.type === 'number' ? Number(input.value) : key === 'windows' ? input.value.split(',').map(x=>x.trim()).filter(Boolean) : input.value;
+    perform(save, () => request('/bilibili/config', {method:'PUT', data:{revision:data.revision,config}}), '浏览设置已保存。');
+  };
+  root.append(form);
+  const rounds = card('最近轮次与兴趣');
+  rounds.append(node('p', data.interests.map(x=>`${x.topic} (${x.weight})`).join('、') || '尚无动态兴趣'));
+  for (const round of data.rounds) rounds.append(node('p', `${timeLabel(round.at)} · ${round.state} · 阅读 ${(round.details.read || []).length} 个 · ${(round.details.errors || []).join(' / ')}`));
+  root.append(rounds);
+  const history = await request('/bilibili/history');
+  const entries = card('真实阅读经历（最近50条）');
+  for (const item of history.items) {
+    const section = node('details'); section.append(node('summary', item.material.title + ' · ' + item.material.source));
+    const link = node('a', '在 B 站打开'); link.href = item.material.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+    section.append(link, node('p',item.material.coverage),node('p',item.material.text));
+    if (item.assessment.summary) section.append(node('p','模型理解：'+item.assessment.summary));
+    if (item.visual.description) section.append(node('p','抽样帧分析：'+item.visual.description));
+    entries.append(section);
+  }
+  if (!history.items.length) entries.append(empty('尚无阅读经历'));
+  root.append(entries);
+  if (data.previews.length) { const preview = card('分享预览 · 未发送');
+    for (const item of data.previews) preview.append(node('p',item.text)); root.append(preview); }
+}
+
+const pages = {overview, platforms, persona, bilibili,
   memory: typeof cognitionPage === "function" ? cognitionPage : conversationMemory, stickers, messages, settings,
   "douyin-account": douyinAccount, "douyin-drafts": douyinDrafts};
 
