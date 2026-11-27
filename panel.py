@@ -137,6 +137,8 @@ def create_app(
     demo_memory = DemoMemory()
     browsing = BrowseRuntime(store, directory, lambda: config.read().settings,
                              bili_sources, bili_model, bili_vision)
+    from memory_maintenance import MemoryMaintenance
+    maintenance = MemoryMaintenance(store,lambda:config.read().settings,live_qq)
 
     def observe_persona(snapshot):
         persona = snapshot.settings.persona
@@ -147,7 +149,7 @@ def create_app(
         store.initialize()
         app.state.token = panel_token(store, directory)
         try:
-            async with browsing.running():
+            async with browsing.running(), maintenance.running():
                 if live_qq is None:
                     yield
                 else:

@@ -8,6 +8,7 @@ from typing import Callable, Protocol
 
 from adapter_base import Adapter, SendResult
 from cognition import Cognition
+from memory_engine import read_config as memory_engine_config
 from events import Event, ReplyIntent
 from llm import LanguageModel, ModelError, parse_reply
 from memory import Memory
@@ -103,7 +104,7 @@ class Dispatcher:
         every = self.settings.chat.participation_every if self.proactive_enabled() else 0
         return self.store.accept(event, every, now, mode=self.mode,
                                  reply_block=self._reply_block(event), defer_quote=defer_quote,
-                                 cognition=self.settings.cognition.extraction)
+                                 cognition=self.settings.cognition.extraction or memory_engine_config(self.store)[0].llm_extraction)
 
     async def _ingest(self, raw: dict) -> dict:
         event = self.adapter.normalize(raw)
@@ -213,13 +214,13 @@ class Dispatcher:
         )
         cognitive = None
         working = None
-        if self.settings.cognition.recall:
+        if self.settings.cognition.recall or memory_engine_config(self.store)[0].embedding_enabled:
             if event.memory_allowed is True and self.memory_enabled(event.channel_key):
                 working = self.cognition.working(event, not proactive)
             try:
-                cognitive = await asyncio.to_thread(
-                    self.cognition.recall, event, self.mode, allowed=self.memory_enabled(event.channel_key),
-                )
+                cognitive = await self.cognition.recall_async(event, self.mode, allowed=self.memory_enabled(event.channel_key))
+                if not self.memory_enabled(event.channel_key):
+                    cognitive = None
             except sqlite3.Error:
                 log.warning("M2 暂不可读取，当前回复使用既有上下文")
         system, user = reply_prompt(persona, event, context, summary, candidates,

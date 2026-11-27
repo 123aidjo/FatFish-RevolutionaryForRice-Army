@@ -13,7 +13,7 @@ from ratelimit import start_of_day
 from settings import Limits
 from stickers import StickerPolicy
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 PANEL_SCHEMA = (
     """CREATE TABLE panel_audit (
@@ -100,7 +100,7 @@ class Store:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version == SCHEMA_VERSION:
                 return
-            if version not in {0, 1, 2, 3, 4}:
+            if version not in {0, 1, 2, 3, 4, 5}:
                 raise RuntimeError(f"SQLite 结构版本不受支持（{version}）")
             if version == 0:
                 db.execute("""
@@ -124,7 +124,11 @@ class Store:
                 db.execute("INSERT INTO outbox SELECT * FROM outbox_previous")
                 db.execute("DROP TABLE outbox_previous")
                 db.execute(STAGE_TWO_SCHEMA[-1])
-            for sql in COGNITIVE_SCHEMA:
+            if version < 5:
+                for sql in COGNITIVE_SCHEMA:
+                    db.execute(sql)
+            from memory_upgrade_schema import SCHEMA as UPGRADE_SCHEMA
+            for sql in UPGRADE_SCHEMA:
                 db.execute(sql)
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 

@@ -213,9 +213,11 @@ M1 在 SQLite schema 4 上为事件记录 `memory_allowed`。旧事件缺少该�
 
 ## M2 认知记忆
 
+当前版本在原 M2/M3 上增加语义检索与记忆成长，数据库已升级为 **schema 6**。在现有记忆工作台的“语义检索与成长”中配置 Embedding、档位、到期评价及后台反思；使用方式、默认参数和迁移说明见 [MEMORY.md](MEMORY.md)。以下 M2/M3 说明介绍原有能力，新自动模型功能默认关闭。
+
 schema 5 原地增表。原始消息、短期窗口、长摘要和 Outbox 沿用 M1 表结构。新增 `memory_nodes`、`memory_edges`、`memory_sources`、`memory_revisions`、`memory_jobs`、`memory_goals`、`memory_self_state`、`memory_suppression`。反思使用类型为 `reflection` 的节点及 `supports` 证据边，关系边的两个端点通过复合外键限定于同一作用域。
 
-正式部署的提取、回忆和反思开关默认关闭。后续获得授权后，可在 `platforms.toml` 的 `[cognition]` 中设置 `extraction`、`recall`、`reflection`，重启 V2 应用。M2 目前使用本地规则提取与推测性反思，均无外部模型调用。用原有 M1 权限判定是否可以记忆，群聊中的人物通过已核验的平台 ID 区分。开启与关闭只影响新功能，不扩大白名单，也不改变发送开关。
+原 M2 提取、回忆和反思开关默认关闭，可在 `platforms.toml` 的 `[cognition]` 中设置 `extraction`、`recall`、`reflection`，重启 V2 应用。原 M2 路径使用本地规则提取与推测性反思；新版面板可单独开启 LLM 提取与有证据反思，相关模型调用受独立预算限制。用原有 M1 权限判定是否可以记忆，群聊中的人物通过已核验的平台 ID 区分。开启与关闭不扩大白名单，也不改变发送开关。
 
 检索默认最多六条，最低置信度 0.65，并用 UTF-8 字节数给 600 Token 配额留出保守边界。候选先按作用域和人物限定，支持中文子串、别名及当前话题，按匹配次数、重要度、置信度和时间衰减排序，再做一层关系扩展。反思和自传分别由 `include_reflections`、`include_autobiography` 控制是否注入。系统自传只采集 M2 启动后观察到的配置及发送确认，无法从当前昵称反推出此前改名日期。
 
@@ -223,7 +225,7 @@ schema 5 原地增表。原始消息、短期窗口、长摘要和 Outbox 沿用
 
 M3 管理 API 继续复用本机令牌和 Origin 校验。读取接口为 `GET /api/cognition`、`GET /api/cognition/self`、`GET /api/cognition/nodes`、`GET /api/cognition/nodes/{id}`。详情包括证据、关系和修订。按 `platform/kind/channel/mode` 传入作用域。修改用 `PUT /api/cognition/nodes/{id}/state`、`PUT /api/cognition/nodes/{id}/goal`、`POST /api/cognition/nodes/{id}/forget`。写操作校验版本，遗忘还须提交对应节点编号。开启反思后可用 `POST /api/cognition/reflections` 请求按当前证据重新评估。
 
-回滚只涉及代码时，先备份当前 schema 5 库。停止 V2 后，在一份校验过的副本上按依赖逆序移除八个 M2 表，设置 `user_version=4` 并验证 `integrity_check` 和 `foreign_key_check`。旧程序不能直接打开 schema 5。若恢复部署前快照，快照之后的新事件与发送记录会丢失，应先保留现库并核对这些记录。
+旧程序不能直接打开新版数据库。当前 schema 6 的回退说明见 [MEMORY.md](MEMORY.md)；不要直接删除表或修改版本号降级。恢复升级前快照前，应保留现库并核对快照之后的新事件与发送记录。
 
 ## M3 中文记忆工作台
 
@@ -234,7 +236,7 @@ M3 管理 API 继续复用本机令牌和 Origin 校验。读取接口为 `GET /
 - schema 5 的消息来源时点和节点时点可能一致且无独立记录。界面将事件发生日期标记为未独立确认，系统首次观测也不能用来推定历史改名日期。
 - 管理员修订生成独立版本并保留原始来源，修订内容会明确标记为管理员的版本。遗忘需要核对当前版本并输入节点编号，保留原始聊天审计及历史备份。
 - 新增接口为 `GET /api/cognition/graph`、`/people`、`/timeline`、`/nodes/{id}/sources/{job_id}`、`/nodes/{id}/forget-impact`，以及 `POST /api/cognition/preview`、`PUT /api/cognition/nodes/{id}/content`。原节点列表追加置信度、排序和分页信息。每个请求均限制作用域；演示需明确指定 `dataset=demo`。
-- M3 沿用 schema 5。回滚到 M2 源码时，保留当前数据库及其已提交的记忆修订，停止 V2 后替换相应文件，再启动并检查 `/health`。
+- 原 M3 使用 schema 5；当前新增的记忆成长使用 schema 6，不能按旧版仅替换源码的方法回滚数据库。
 
 ### 主人 QQ 私聊与问候
 

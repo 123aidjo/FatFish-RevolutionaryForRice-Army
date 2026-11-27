@@ -13,6 +13,9 @@ from live_qq import CHANNEL, owner_channel
 from policy import allowed
 from settings import ConfigModel, Platform
 from store import Store
+from memory_engine import EngineConfig, EngineError, Embeddings, VectorIndex, read_config, save_config, search
+from memory_growth import Growth
+from contextlib import closing
 
 Kind = Literal["person", "event", "fact", "preference", "promise", "autobiography", "reflection"]
 NodeState = Literal["active", "inactive", "superseded", "conflict"]
@@ -67,9 +70,42 @@ class Preview(ConfigModel):
     text: str = Field(min_length=1,max_length=300)
 
 
+class EngineEdit(ConfigModel):
+    revision: str = Field(pattern=r'^[0-9a-f]{64}$')
+    config: EngineConfig
+    clear_api_key: bool = False
+
+
+class HybridQuery(Preview):
+    history: bool = False
+
+
+class GrowthChange(Change):
+    action: Literal['promote','retain','demote','archive','restore','soft_delete']
+    tier: str | None = None
+
+
+class TaskRequest(ConfigModel):
+    scope: Scope
+    kind: Literal['evaluate','reflection'] = 'evaluate'
+
+
 def page(limit: int, offset: int, maximum=100):
     if not (0 <= offset <= 1000000 and 1 <= limit <= maximum):
         raise HTTPException(422, "分页参数超出范围")
+
+
+def scope_permitted(key, settings, live_qq=None):
+    if key == SYSTEM_SCOPE: return True
+    platform,kind,channel,mode=json.loads(key)
+    if platform not in settings.platforms or kind=='role': return False
+    if mode=='live' and platform=='qq' and live_qq is not None:
+        if not live_qq.enabled(): return False
+        actual=(platform,kind,channel)
+        return ((actual==CHANNEL and settings.platforms['qq'].record_memory)
+                or (actual==owner_channel(settings) and settings.qq_owner_record_memory))
+    cfg=settings.platforms[platform]
+    return cfg.enabled and cfg.receive and cfg.record_memory and allowed(cfg.allowlist,kind,channel)
 
 
 def routes(store: Store, current, demo: DemoMemory, *, live_qq=None, redactor=lambda: str) -> APIRouter:
@@ -279,6 +315,81 @@ def routes(store: Store, current, demo: DemoMemory, *, live_qq=None, redactor=la
         if not settings.reflection:
             raise HTTPException(409,"M2 反思暂未启用")
         return {"node_id":Cognition(data.store,settings).reflect(key,payload.subject,payload.topic)}
+
+    @api.get('/engine')
+    def engine_config():
+        cfg,revision=read_config(store)
+        public=cfg.model_dump(); public['api_key']=''
+        index=VectorIndex(store).status()
+        index['errors']=[{'error':e['error'],'attempts':e['attempts'],'available':e['available']} for e in index['errors']]
+        with closing(store.open_read()) as db:
+            tasks=[dict(r) for r in db.execute('SELECT kind,state,count(*) count FROM memory_tasks GROUP BY kind,state')]
+        return {'config':public,'revision':revision,'key_configured':bool(cfg.api_key),'index':index,'tasks':tasks}
+
+    @api.put('/engine')
+    def configure_engine(payload: EngineEdit):
+        cfg=payload.config
+        if not cfg.api_key and not payload.clear_api_key:
+            cfg=cfg.model_copy(update={'api_key':read_config(store)[0].api_key})
+        try: save_config(store,cfg,payload.revision)
+        except EngineError: raise HTTPException(409,'记忆设置已更新，请刷新') from None
+        return {'saved':True}
+
+    @api.post('/engine/test')
+    async def test_embedding():
+        cfg,_=read_config(store)
+        try:
+            vectors=await Embeddings(cfg).embed(['大肥鱼记忆连接测试，不包含私人内容'])
+        except EngineError as exc: raise HTTPException(502,str(exc)) from None
+        return {'available':True,'model':cfg.model,'dimension':len(vectors[0])}
+
+    @api.post('/engine/rebuild')
+    def rebuild_index():
+        VectorIndex(store).rebuild()
+        return {'queued':True}
+
+    @api.post('/engine/retry')
+    def retry_index():
+        VectorIndex(store).retry()
+        return {'queued':True}
+
+    @api.post('/engine/search')
+    async def hybrid_search(payload: HybridQuery):
+        data,key=workspace(payload.scope)
+        if not accepted_text(payload.text): raise HTTPException(422,'请输入普通检索文本')
+        result=await search(data.store,key,payload.subject,payload.text,history=payload.history)
+        workspace(payload.scope)  # Permission can change while an external request is in flight.
+        valid=[]
+        for item in result['items']:
+            details=data.memory.get(key,item['node']['id'])
+            if details is None or details['updated_at']!=item['node']['updated_at']: continue
+            item['sources']=details['sources']
+            valid.append(item)
+        result['items']=valid
+        return clean(result)
+
+    @api.post('/engine/tasks')
+    def schedule_tasks(payload: TaskRequest):
+        data,key=workspace(payload.scope)
+        if payload.scope.dataset=='demo': raise HTTPException(409,'演示数据不调用后台模型')
+        count=Growth(data.store).schedule(force=True,scope=key,kind=payload.kind)
+        return {'queued':count}
+
+    @api.get('/engine/nodes')
+    def lifecycle_nodes(scope: Scoped,status: Literal['active','archived','soft_deleted','inactive']='active'):
+        data,key=workspace(scope)
+        with closing(data.store.open_read()) as db:
+            rows=[dict(r) for r in db.execute('''SELECT n.id,n.value,n.updated_at,n.importance,n.confidence,l.*
+                FROM memory_nodes n JOIN memory_lifecycle l ON l.node_id=n.id
+                WHERE n.scope=? AND l.status=? ORDER BY n.updated_at DESC LIMIT 100''',(key,status))]
+        return clean({'items':rows})
+
+    @api.put('/engine/nodes/{node_id}')
+    def lifecycle_change(node_id: int,payload: GrowthChange):
+        data,key=workspace(payload.scope)
+        try: Growth(data.store).transition(key,node_id,payload.updated_at,payload.action,payload.tier,manual=True)
+        except EngineError as exc: raise HTTPException(409,str(exc)) from None
+        return {'ok':True}
 
     return api
 

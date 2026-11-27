@@ -11,7 +11,7 @@ const memoryActions = {created:"形成记忆", conflict:"记录冲突", supersed
   goal_completed:"完成目标", goal_cancelled:"取消目标", goal_expired:"目标逾期"};
 const goalStates = {proposed:"待确认", active:"进行中", completed:"已完成", cancelled:"已取消", expired:"已过期"};
 const memoryTabs = {overview:"记忆总览", graph:"记忆图谱", people:"人物档案", timeline:"经历时间线",
-  search:"记忆搜索", manage:"管理与自我模型", short:"短期会话"};
+  search:"记忆搜索", manage:"管理与自我模型", engine:"语义检索与成长", short:"短期会话"};
 
 function memoryScope(parts, dataset) {
   const [platform,kind,channel,mode] = typeof parts === "string" ? JSON.parse(parts) : parts;
@@ -156,6 +156,7 @@ async function cognitionPage(root) {
       });
       if (tab === "search") await renderMemorySearch(content,params,open);
       if (tab === "manage") await renderMemoryManage(content,snapshot,params,open);
+      if (tab === "engine") await renderMemoryEngine(content,params,open);
       if (tab === "short") {
         if(dataset==="demo") content.append(empty("演示工作台使用独立的结构化记忆库。"));
         else await conversationMemory(content);
@@ -565,6 +566,12 @@ async function renderMemoryManage(host,snapshot,params,open){
     const button=action(goal.condition,"memory-item");button.onclick=()=>open(goal.node_id);
     role.append(button,row(goalStates[goal.state],memoryDate(goal.due_at,"时间未指定")));
   }
+  role.append(node('h3','基于经历形成的认识'),node('p','这些是有证据的推测性认识，不会自动改写静态人设。'));
+  for(const view of info.grounded_views || []) {
+    const button=action(view.value,'memory-item');button.onclick=()=>open(view.id);
+    role.append(button,row('置信度',String(view.confidence)));
+  }
+  if(!info.grounded_views?.length)role.append(empty('尚未形成有独立证据支持的长期认识。'));
   const system=card("系统里程碑");
   const facts=await memoryQuery("/nodes",{...memoryScope(["system","role","fishbot-v2","live"],params.dataset),limit:6});
   memoryList(system,facts.items,open);
@@ -625,8 +632,16 @@ function renderMemoryDetail(host,data,params,open,close,changed) {
       link.onclick=()=>open(version.evidence_node,data.scope,false);
       history.append(row(memoryDate(version.at),link));
     }else history.append(row(memoryDate(version.at),label));
+    if (version.action.startsWith('growth_') && version.previous_state) history.append(node('p',version.previous_state));
   }
   host.append(sources,edges,history);
+  if (data.lifecycle) {
+    const life=card('记忆成长');
+    life.append(row('档位',data.lifecycle.tier||'待分档'),row('生命周期',data.lifecycle.status),
+      row('到期时间',memoryDate(data.lifecycle.expires,'永久 / 尚未分配')),
+      row('有效召回次数',String(data.lifecycle.recalls)),row('最近召回',memoryDate(data.lifecycle.last_recall)));
+    host.append(life);
+  }
   if(data.goal){
     const form=node("form","","memory-goal");
     const state=memoryPick(goalStates,data.goal.state);
@@ -693,3 +708,75 @@ function renderMemoryDetail(host,data,params,open,close,changed) {
 }
 
 
+
+
+async function renderMemoryEngine(host, params, open) {
+  if (params.dataset === "demo") { host.append(empty("请切换到真实数据后配置语义检索与记忆成长，演示数据不调用模型。")); return; }
+  const data = await request('/cognition/engine');
+  const cfg = data.config;
+  const status = card('索引与后台任务');
+  status.append(row('当前可用向量数',String(data.index.current_ready)),row('实际向量维度',String(data.index.detected_dimension || '尚未检测')),
+    row('等待新一代索引',String(data.index.needs_rebuild || 0)),
+    node('pre',JSON.stringify({index:data.index.states,errors:data.index.errors,tasks:data.tasks},null,2)));
+  for (const [label,path] of [['测试 Embedding 连接','test'],['重建全部索引','rebuild'],['重试失败索引','retry']]) {
+    const button=action(label);button.onclick=()=>perform(button,()=>request('/cognition/engine/'+path,{method:'POST'}),
+      r=>r.dimension?'连接成功，实际维度 '+r.dimension:'已排队；启用语义检索后由后台分批处理');status.append(button);
+  }
+  host.append(status);
+  const form=node('form','','card');form.append(node('h2','配置 Embedding 与记忆成长'),node('p','先保存参数再测试连接。后台模型任务默认关闭。Key 留空保留原值；提取、评价与反思使用当前角色聊天模型。Token 预算采用保守上界估算。'));
+  form.append(row('Embedding 密钥',data.key_configured?'已配置，保存时留空可保留':'未配置，本机 Ollama 通常无需密钥'));
+  const labels={embedding_enabled:'启用语义检索与后台索引',base_url:'Embedding API 地址（包含 /v1 路径）',model:'Embedding 模型',dimensions:'向量维度（留空自动检测）',api_key:'Embedding API Key',
+    timeout:'索引请求超时（秒）',query_timeout:'聊天检索等待上限（秒）',interval:'后台检查间隔（秒）',batch_size:'每批数量',
+    keyword_weight:'关键词权重',semantic_weight:'语义权重',graph_weight:'图谱权重',min_similarity:'最低余弦相似度',min_score:'最低相关性分数',candidates:'候选数量',final_count:'最终召回数量',token_budget:'召回上下文 Token 上限',
+    llm_extraction:'启用 LLM 批量记忆提取',growth_enabled:'启用自动分档与到期评价',reflection_enabled:'启用有证据的后台反思',include_reflections:'允许将反思用于聊天',include_autobiography:'允许召回角色自传',
+    task_interval:'评价与反思间隔（秒）',max_output_tokens:'单次后台模型输出上限',daily_requests:'每日后台 LLM 请求上限',daily_tokens:'每日后台 LLM Token 预算',archive_days:'归档复评天数（留空永久保留）',allow_soft_delete:'允许评价后软删除',initial_tier:'无匹配档位时使用的初始档位 ID'};
+  const fields={};
+  for(const [key,label] of Object.entries(labels)) {
+    const value=cfg[key]; const field=node('input');
+    field.type=key==='api_key'?'password':typeof value==='boolean'?'checkbox':typeof value==='number'||['dimensions','archive_days'].includes(key)?'number':'text';
+    if(field.type==='checkbox')field.checked=value;else field.value=value ?? '';
+    if(field.type==='number')field.step='any';
+    field.autocomplete='off';fields[key]=field;form.append(labeled(label,field));
+  }
+  const clear=node('input');clear.type='checkbox';form.append(labeled('清除已保存的 Embedding Key',clear));
+  const tiers=card('自定义记忆档位');const rows=[];
+  const columns={id:'ID',name:'名称',order:'顺序',retention_days:'保留天数（空值=永久）',min_importance:'最低重要度',min_confidence:'最低置信度',min_confirmations:'最低独立证据数',min_recalls:'最低召回次数'};
+  function addTier(tier){
+    const box=node('details');box.open=true;box.append(node('summary',tier.name||'新档位'));const inputs={};
+    for(const [key,label] of Object.entries(columns)) { const field=node('input');field.type=['id','name'].includes(key)?'text':'number';field.step='any';field.value=tier[key]??'';inputs[key]=field;box.append(labeled(label,field)); }
+    const remove=action('删除此档位');remove.onclick=()=>{box.remove();const i=rows.findIndex(r=>r.inputs===inputs);rows.splice(i,1);};box.append(remove);tiers.append(box);rows.push({inputs});
+  }
+  cfg.tiers.forEach(addTier);
+  const add=action('添加档位');add.onclick=()=>addTier({id:'tier_'+Date.now(),name:'新档位',order:Math.max(...rows.map(r=>Number(r.inputs.order.value)),0)+10,min_importance:3,min_confidence:.7,min_confirmations:2,min_recalls:0});
+  tiers.append(add);form.append(tiers);
+  const save=node('button','保存记忆设置','primary');save.type='submit';form.append(save);
+  form.onsubmit=e=>{e.preventDefault();const updated={...cfg};
+    for(const [key,field] of Object.entries(fields))updated[key]=field.type==='checkbox'?field.checked:field.type==='number'?(field.value===''?null:Number(field.value)):field.value;
+    updated.tiers=rows.map(({inputs})=>Object.fromEntries(Object.entries(inputs).map(([key,field])=>[key,field.type==='number'?(field.value===''?null:Number(field.value)):field.value])));
+    perform(save,()=>request('/cognition/engine',{method:'PUT',data:{revision:data.revision,config:updated,clear_api_key:clear.checked}}),'设置已保存；已删除档位的记忆迁入初始档位并保留记录');
+  };host.append(form);
+  const searchBox=card('混合检索测试 · 当前会话');
+  const subject=node('input');subject.placeholder='主体 ID，可从记忆详情的主体字段复制';
+  const query=node('input');query.placeholder='例如：我晚上应该避免喝什么？';query.maxLength=300;
+  const historical=node('input');historical.type='checkbox';
+  const result=node('div');const test=action('测试检索');
+  test.onclick=()=>perform(test,async()=>{const answer=await request('/cognition/engine/search',{method:'POST',data:{scope:params,subject:subject.value,text:query.value,history:historical.checked}});
+    result.replaceChildren(node('p',answer.degraded?'Embedding 不可用，已降级为关键词检索':'检索完成'));
+    for(const item of answer.items){const button=action(item.node.value);button.onclick=()=>open(item.node.id);result.append(button,node('p',`分数 ${item.score.toFixed(3)} · ${item.channels.join(' + ')} · 置信度 ${item.node.confidence}`));}
+    if(!answer.items.length)result.append(empty('没有达到阈值的相关记忆'));
+  },'检索完成',false);
+  searchBox.append(labeled('记忆主体',subject),query,labeled('包含历史归档',historical),test,result);host.append(searchBox);
+  const history=card('档位与生命周期 · 当前会话');
+  for(const [label,kind] of [['评价本会话记忆','evaluate'],['反思本会话经历','reflection']]) {const button=action(label);button.onclick=()=>perform(button,()=>request('/cognition/engine/tasks',{method:'POST',data:{scope:params,kind}}),r=>'已排队 '+r.queued+' 个后台任务');history.append(button);}
+  const state=memoryPick({active:'有效',archived:'归档',soft_deleted:'软删除',inactive:'失效'},'active');const list=node('div');history.append(state,list);
+  async function load(){const result=await memoryQuery('/engine/nodes',{...params,status:state.value});list.replaceChildren();
+    for(const item of result.items){const box=card('#'+item.id);const view=action(item.value);view.onclick=()=>open(item.id);box.append(view,row('档位',item.tier||'待分档'),row('到期时间',memoryDate(item.expires,'永久 / 尚未分配')),row('重要度 / 置信度',item.importance+' / '+item.confidence),row('召回次数',String(item.recalls)));
+      const tier=memoryPick(Object.fromEntries(cfg.tiers.map(t=>[t.id,t.name])),item.tier||cfg.initial_tier);
+      const operation=memoryPick({retain:'保留/调整档位',promote:'晋升',demote:'降级',archive:'归档',restore:'恢复',soft_delete:'软删除'},item.status==='archived'?'restore':'retain');
+      const apply=action('应用');apply.onclick=()=>perform(apply,async()=>{await request('/cognition/engine/nodes/'+item.id,{method:'PUT',data:{scope:params,updated_at:item.updated_at,action:operation.value,tier:tier.value}});await load();},'记忆已更新，详情中可查看修订记录',false);
+      box.append(tier,operation,apply);list.append(box);
+    }
+    if(!result.items.length)list.append(empty());
+  }
+  state.onchange=()=>load().catch(e=>toast(e.message,true));await load();host.append(history);
+}

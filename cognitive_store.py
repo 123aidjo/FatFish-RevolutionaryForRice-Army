@@ -45,6 +45,9 @@ class Candidate:
     due_at: float | None = None
     withdraw: bool = False
     instance: str = ""
+    origin: str = "message"
+    confidence: float | None = None
+    epistemic: str = "self_report"
 
 
 class CognitiveStore:
@@ -52,16 +55,21 @@ class CognitiveStore:
         self.store = store
         self.clock = clock
 
-    def claim(self, mode: str) -> tuple[dict, Event] | None:
+    def claim(self, mode: str, *, scope: str | None = None, subject: str | None = None) -> tuple[dict, Event] | None:
         now = self.clock()
         with self.store.transaction() as db:
             db.execute("""UPDATE memory_jobs SET state='failed',lease=NULL,error='retry_exhausted'
                 WHERE mode=? AND state='running' AND available<=? AND attempts>=?""",
                        (mode, now, MAX_ATTEMPTS))
             job = db.execute("""UPDATE memory_jobs SET state='running', attempts=attempts+1, available=?, lease=?
-                WHERE id=(SELECT id FROM memory_jobs WHERE mode=? AND state IN ('pending','running')
-                    AND available<=? AND attempts<? ORDER BY available,id LIMIT 1) RETURNING *""",
-                             (now + 60, token_hex(16), mode, now, MAX_ATTEMPTS)).fetchone()
+                WHERE id=(SELECT j.id FROM memory_jobs j JOIN events e
+                    USING(platform,channel_kind,channel_id,message_id)
+                    WHERE j.mode=? AND j.state IN ('pending','running')
+                    AND j.available<=? AND j.attempts<? AND (? IS NULL OR j.scope=?)
+                    AND (? IS NULL OR json_extract(e.payload,'$.sender_id')=?)
+                    ORDER BY j.available,j.id LIMIT 1) RETURNING *""",
+                             (now + 60, token_hex(16), mode, now, MAX_ATTEMPTS,
+                              scope, scope, subject, subject)).fetchone()
         if job is None:
             return None
         event = self.store.get_event(*(job[key] for key in ("platform", "channel_kind", "channel_id", "message_id")))
@@ -158,9 +166,10 @@ class CognitiveStore:
                     self._delete_slots(db, scope, {slot}, self.clock())
                     continue
                 node = self._put(db, scope, event.sender_id, slot, item.kind, item.topic, item.value,
-                                 event.timestamp, item.importance, 0.95 if item.kind == "person" else 0.85,
-                                 "message", source, job["id"], item.correction, item.due_at)
+                                 event.timestamp, item.importance, item.confidence if item.confidence is not None else (0.95 if item.kind == "person" else 0.85),
+                                 item.origin, source, job["id"], item.correction, item.due_at)
                 if node:
+                    db.execute('UPDATE memory_lifecycle SET epistemic=? WHERE node_id=?',(item.epistemic,node))
                     ids.append((node, item.kind, item.topic))
                     if item.kind in {"event", "autobiography"}:
                         self._self_state(db, scope, "last_experience", node, self.clock())
@@ -397,6 +406,8 @@ class CognitiveStore:
                     FROM memory_revisions WHERE scope=? AND node_id=? ORDER BY id DESC LIMIT 50""", (scope, node_id))]
                 goal = db.execute("SELECT * FROM memory_goals WHERE scope=? AND node_id=?", (scope, node_id)).fetchone()
                 node["goal"] = dict(goal) if goal else None
+                lifecycle = db.execute('SELECT * FROM memory_lifecycle WHERE node_id=?',(node_id,)).fetchone()
+                node['lifecycle'] = dict(lifecycle) if lifecycle else None
             return node
 
     def scopes(self) -> list[dict]:
@@ -406,6 +417,12 @@ class CognitiveStore:
 
     def self_state(self, scope: str) -> dict:
         with closing(self.store.open_read()) as db:
+            views = [dict(row) for row in db.execute("""SELECT n.id,n.subject,n.value,n.confidence,n.updated_at
+                FROM memory_self_state s JOIN memory_nodes n ON n.scope=s.scope AND CAST(n.id AS TEXT)=s.value
+                WHERE s.scope=? AND s.key LIKE 'grounded_view:%' AND n.state='active'
+                AND n.kind='reflection' AND EXISTS (SELECT 1 FROM memory_edges e
+                    WHERE e.scope=n.scope AND e.target_id=n.id AND e.relation='supports')
+                ORDER BY n.updated_at DESC LIMIT 20""", (scope,))]
             last = db.execute("SELECT value FROM memory_self_state WHERE scope=? AND key='last_experience'",
                               (scope,)).fetchone()
             state = db.execute("SELECT value,updated_at FROM memory_self_state WHERE scope=? AND key='persona'",
@@ -417,7 +434,8 @@ class CognitiveStore:
                                                    (scope, self.clock()))]
         topics = list(dict.fromkeys(row["topic"] for row in self.list(scope, kind="event", state="active", limit=12)))
         return {"observed_persona": {**json.loads(state["value"]), "observed_at": state["updated_at"]} if state else None,
-                "recent_topics": topics, "last_experience_id": int(last["value"]) if last else None, "open_goals": goals}
+                "recent_topics": topics, "last_experience_id": int(last["value"]) if last else None,
+                "open_goals": goals, "grounded_views": views}
 
     def list(self, scope: str, *, q="", kind="", state="", subject="", since=0., until=None,
              confidence=0., sort="recent", limit=50, offset=0):

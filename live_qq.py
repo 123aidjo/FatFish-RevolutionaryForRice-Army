@@ -296,7 +296,8 @@ class LiveQQ:
 
     def _cognitive_allowed(self, event: Event) -> bool:
         settings = load_settings(database_path=self.store.path)
-        return (settings.cognition.extraction and self.enabled()
+        from memory_engine import read_config
+        return ((settings.cognition.extraction or read_config(self.store)[0].llm_extraction) and self.enabled()
                 and event.channel_key in (CHANNEL, owner_channel(settings)) and self.memory_allowed(event.channel_key))
 
     @staticmethod

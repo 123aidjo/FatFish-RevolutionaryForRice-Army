@@ -126,6 +126,57 @@ class Cognition:
         self.data = CognitiveStore(store)
         self.config = config
 
+    async def recall_async(self, event, mode, *, allowed):
+        from memory_engine import read_config, search
+        cfg,_=read_config(self.data.store)
+        if not cfg.embedding_enabled:
+            trace={}
+            result=await asyncio.to_thread(self.recall,event,mode,allowed=allowed,trace=trace)
+            self.record_recalls([r['id'] for r in trace.get('items',[])])
+            return result
+        if not (allowed and event.memory_allowed is True and not event.is_self
+                and event.speaker in {'OWNER','PEER'} and event.sender_id and accepted_text(event.text)):
+            return {}
+        if IDENTITY_CUE.search(event.text) and (cfg.include_autobiography or self.config.include_autobiography):
+            original=Cognition(self.data.store,self.config.model_copy(update={'recall':True,'include_autobiography':True}))
+            trace={}
+            result=await asyncio.to_thread(original.recall,event,mode,allowed=allowed,trace=trace)
+            if result:
+                self.record_recalls([r['id'] for r in trace.get('items',[])])
+                return result
+        scope=scope_for(event,mode)
+        found=await search(self.data.store,scope,event.sender_id,event.text,history=bool(RECALL_CUE.search(event.text)))
+        result={'关联记忆':[]}; used=[]; now=self.data.clock()
+        with closing(self.data.store.open_read()) as db:
+            for candidate in found['items']:
+                # Re-read after network I/O: edits/forgetting/archiving may have occurred meanwhile.
+                row=db.execute('SELECT n.*,l.status lifecycle_status,l.epistemic FROM memory_nodes n JOIN memory_lifecycle l ON l.node_id=n.id WHERE n.scope=? AND n.subject=? AND n.id=?',
+                               (scope,event.sender_id,candidate['node']['id'])).fetchone()
+                if row is None or row['updated_at']!=candidate['node']['updated_at']:
+                    continue
+                if row['state']!='active' and not (RECALL_CUE.search(event.text) and row['lifecycle_status']=='archived'):
+                    continue
+                policy = Cognition(self.data.store,self.config.model_copy(update={
+                    'include_reflections':self.config.include_reflections or cfg.include_reflections,
+                    'include_autobiography':self.config.include_autobiography or cfg.include_autobiography}))
+                if not policy._injectable(db,row,now): continue
+                item={'记忆':row['value'],'类型':row['kind'],'置信度':row['confidence'],
+                      '性质':{'inference':'推测，不能作为确定事实','opinion':'用户主观观点','observation':'有来源的观察','self_report':'有来源的自述'}[row['epistemic']],
+                      '时间':row['updated_at'],'来源节点':row['id'],'历史归档':row['lifecycle_status']=='archived'}
+                proposed={'关联记忆':[*result['关联记忆'],item]}
+                if len(json.dumps(proposed,ensure_ascii=False).encode())<=cfg.token_budget:
+                    result=proposed; used.append(row['id'])
+                if len(used)>=cfg.final_count: break
+        self.record_recalls(used)
+        return result if used else {}
+
+    def record_recalls(self, used):
+        now=self.data.clock()
+        if used:
+            with self.data.store.transaction() as db:
+                for identifier in used:
+                    db.execute('UPDATE memory_lifecycle SET recalls=recalls+1,last_recall=? WHERE node_id=? AND (last_recall IS NULL OR last_recall<?)',(now,identifier,now-60))
+
     def run_one(self, mode: str, allowed: Callable[[Event], bool], extractor=extract) -> bool:
         if not self.config.extraction:
             return False
@@ -146,15 +197,22 @@ class Cognition:
         return True
 
     async def worker(self, mode: str, allowed: Callable[[Event], bool]):
-        if not self.config.extraction:
-            return
+        from memory_engine import read_config
+        from memory_growth import Extractor, MemoryModel
+        from settings import load_settings
+        extractor = Extractor(self.data.store,MemoryModel(self.data.store,lambda:load_settings(database_path=self.data.store.path)))
         while True:
+            cfg = None
             try:
-                found = await asyncio.to_thread(self.run_one, mode, allowed)
+                cfg,_=read_config(self.data.store)
+                if cfg.llm_extraction:
+                    found = await extractor.batch(mode,allowed)
+                else:
+                    found = await asyncio.to_thread(self.run_one, mode, allowed)
             except sqlite3.Error:
                 log.warning("M2 当前无法写入，将重试")
                 found = False
-            await asyncio.sleep(0.25 if found else 3)
+            await asyncio.sleep(cfg.interval if cfg and cfg.llm_extraction else (0.25 if found else 3))
 
     def reflect(self, scope: str, subject: str, topic: str) -> int | None:
         if not self.config.reflection:
