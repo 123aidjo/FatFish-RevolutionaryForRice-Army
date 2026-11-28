@@ -8,6 +8,7 @@ import time
 from uuid import uuid4
 
 import httpx
+from usage_ledger import meter
 
 from cognitive_store import Candidate, CognitiveStore, digest, scope_for
 from memory_engine import EngineError, read_config
@@ -51,6 +52,10 @@ class Extractor:
         self.store,self.model=store,model
         self.memory=CognitiveStore(store)
 
+    async def ask(self,scope,instruction,payload):
+        with meter(self.store,scope,json.loads(scope)[3],'background',stage='memory_extract'):
+            return await self.model.json(instruction,payload)
+
     async def batch(self,mode,allowed):
         from cognition import accepted_text, extract
         cfg,_=read_config(self.store)
@@ -75,7 +80,7 @@ class Extractor:
             work.append((job,event,prior))
         if not work: return False
         try:
-            output=await self.model.json(
+            output=await self.ask(work[0][0]['scope'],
                 '从消息识别值得长期记住的信息，寒暄返回空数组。返回items数组，每项job_id,kind(person/event/fact/preference/promise/autobiography),'
                 'topic,value,quote(逐字引用),importance(1到5),epistemic(self_report/opinion/inference/observation),'
                 'operation(new/confirm/supplement/revise/conflict),target_id(已有同类事实ID或null)。'
@@ -208,8 +213,9 @@ class Growth:
                 tasks.append(dict(row))
         for task in tasks:
             try:
-                if kind=='reflection': await self.reflect(task)
-                else: await self.evaluate(task)
+                with meter(self.store,task['scope'],json.loads(task['scope'])[3],'background',stage='memory_'+kind):
+                    if kind=='reflection': await self.reflect(task)
+                    else: await self.evaluate(task)
                 with self.store.transaction() as db:
                     db.execute("UPDATE memory_tasks SET state='done',lease=NULL,error=NULL,available=? WHERE id=? AND lease=?",(now+cfg.task_interval,task['id'],lease))
             except asyncio.CancelledError: raise

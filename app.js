@@ -371,6 +371,7 @@ async function persona(root) {
     node("p", "常用昵称 · " + item.aliases.join("、") + "。人设调整仅影响表达，账号权限和审核规则独立生效。"));
   const form = node("form");
   form.append(fields(labeled("机器人名称", input("name", item.name, {required: true, maxLength: 50})),
+    labeled('昵称（每行一个）',area('aliases',item.aliases.join('\n'),1200)),
     numberField("回复字数上限（0 为不限）", "max_chars", item.max_chars, 0, 1000),
     numberField("温度", "temperature", item.temperature, 0, 2, "any")),
   labeled("完整人设提示词", area("system_prompt", item.system_prompt, 10000, true)),
@@ -379,6 +380,7 @@ async function persona(root) {
     revision: snapshot.revision, name: values.get("name"), system_prompt: values.get("system_prompt"),
     style: values.get("style"), max_chars: Number(values.get("max_chars")),
     temperature: Number(values.get("temperature")), emotions: values.getAll("emotions"),
+    aliases:String(values.get('aliases')||'').split('\n').map(x=>x.trim()).filter(Boolean),
   }}), snapshot);
   section.append(form);
   const tuning = card("模型与接话节奏");
@@ -577,6 +579,53 @@ async function settings(root) {
   other.append(node("p", "平台开关与会话白名单在平台管理页编辑。DeepSeek 密钥由服务进程的环境变量管理。"),
     link, row("当前配置版本", snapshot.revision.slice(0, 8)));
   root.append(section, other);
+  await replyDecisionControls(root);
+}
+
+async function replyDecisionControls(root) {
+  const data=await request('/reply-decision');const cfg=data.config;
+  const box=card('动态回复决策');const form=node('form');
+  box.append(node('p','直接 @、引用和主人私聊不经过 Planner。节能模式只调用回复模型；均衡模式先做一次轻量决策。'),
+    row('基础间隔',data.base_interval+' 条（沿用上方主动接话间隔）'),
+    row('当前名称与昵称',[data.name,...data.aliases].join('、')),
+    node('p','名称和昵称在 AI 人设页修改。基础间隔、人设变更沿用原设置生效方式，运行中的服务需重启；以下决策参数保存后用于新批次。'));
+  const labels={mode:'回复模式',backoff:'启用动态退避',multiplier:'退避倍率',max_interval:'最大消息间隔',max_wait:'最大决策等待（秒）',
+    conversation_ttl:'连续对话有效期（秒）',early_name:'提到名称或昵称时提前检查',early_continuation:'延续对话时提前检查',early_topic:'明显换题时提前检查',early_interest:'兴趣相关时提前检查',
+    aggregate_seconds:'短消息聚合等待（秒，0 为不等待）',semantic:'启用语义兴趣与话题匹配',semantic_interval:'语义检查最小间隔（秒）',semantic_timeout:'语义请求超时（秒）',
+    interest_threshold:'兴趣最低余弦相似度',topic_threshold:'话题变化余弦阈值',continuation_threshold:'延续话题最低余弦相似度',
+    planner_same_model:'Planner 使用当前回复模型和凭据',planner_base_url:'独立 Planner API 地址',planner_model:'独立 Planner 模型',planner_key:'独立 Planner Key（留空保留）',
+    planner_disable_thinking:'Planner 关闭思考模式',planner_timeout:'Planner 超时（秒）',planner_input_tokens:'Planner 输入预算（UTF-8 字节保守上界）',
+    planner_output_tokens:'Planner 最大输出 Token',planner_messages:'Planner 最多候选消息数',planner_failure:'Planner 异常处理'};
+  const controls={};
+  for(const [key,label] of Object.entries(labels)) {
+    let field;
+    if(key==='mode'||key==='planner_failure')field=memoryPick(key==='mode'?{eco:'节能模式',balanced:'均衡模式'}:{eco:'降级节能模式',skip:'结束本轮接话'},cfg[key]);
+    else {field=node('input');field.type=typeof cfg[key]==='boolean'?'checkbox':typeof cfg[key]==='number'?'number':key==='planner_key'?'password':'text';
+      if(field.type==='checkbox')field.checked=cfg[key];else field.value=cfg[key];if(field.type==='number')field.step='any';field.autocomplete='off';}
+    controls[key]=field;form.append(labeled(label,field));
+  }
+  const clear=node('input');clear.type='checkbox';form.append(row('独立 Planner 密钥',data.key_configured?'已配置':'未配置'),labeled('清除独立 Planner Key',clear));
+  const save=node('button','保存决策设置','primary');save.type='submit';form.append(save);
+  form.onsubmit=e=>{e.preventDefault();const config={...cfg};for(const [key,field] of Object.entries(controls))config[key]=field.type==='checkbox'?field.checked:field.type==='number'?Number(field.value):field.value;
+    perform(save,()=>request('/reply-decision',{method:'PUT',data:{revision:data.revision,config,clear_key:clear.checked}}),'回复决策设置已保存');};
+  box.append(form);root.append(box);
+  const usage=card('决策与模型消耗');const range=node('form');const scope=memoryPick({'':'当前角色全部会话'},'');
+  for(const parts of data.scopes){const option=node('option',parts.join(' / '));option.value=JSON.stringify(parts);scope.append(option);}
+  const since=input('since','',{type:'datetime-local'}),until=input('until','',{type:'datetime-local'});const show=node('button','查看统计');show.type='submit';
+  range.append(labeled('会话',scope),labeled('开始时间',since),labeled('结束时间',until),show);const output=node('div');usage.append(range,output);root.append(usage);
+  async function load(){const params=new URLSearchParams({scope:scope.value,since:since.value?String(new Date(since.value).getTime()/1000):'0'});if(until.value)params.set('until',String(new Date(until.value).getTime()/1000));
+    const report=await request('/reply-decision/stats?'+params);output.replaceChildren(node('p','优先记录 API usage；缺少 usage 时标记估算，失败且无 usage 时记为未知，不能当作零消耗。记忆后台任务单独列出。'));
+    for(const [mode,value] of Object.entries(report.totals)){const item=card(mode==='eco'?'节能模式':'均衡模式');
+      for(const [key,label] of Object.entries({tokens:'已记录 Token',calls:'模型请求次数',sent:'成功回复数',planner_average_tokens:'平均 Planner Token',silent_average_tokens:'平均沉默决策 Token',tokens_per_sent:'每条成功回复分摊 Token',estimated_requests:'估算请求数',unknown_requests:'用量未知请求数'}))item.append(row(label,value[key]===null?'暂无数据':String(Math.round(value[key]*100)/100)));
+      output.append(item);}
+    const stages={rules:'规则与结果',planner:'轻量 Planner',replyer:'回复生成',review:'回复审核',embedding:'语义检索',embedding_trigger:'兴趣匹配',memory_summary:'记忆摘要',memory_extract:'记忆提取',memory_evaluate:'记忆评价',memory_reflection:'记忆反思',memory_index:'记忆索引'};
+    const events={received:'接收消息',rule_skipped:'规则跳过或批次合并',triggered:'动态触发',completed:'请求完成',reply:'决定回复',silent:'决定沉默',sent:'发送成功',error:'请求异常',error_or_skip:'异常或失效',planner_fallback:'Planner 降级',embedding_fallback:'语义降级'};
+    for(const group of report.groups)output.append(row((stages[group.stage]||group.stage)+' · '+(events[group.event]||group.event)+' · '+group.decision_mode,
+      group.records+' 次记录 / '+group.calls+' 次调用 / '+(group.prompt+group.completion)+' Token（输入 '+group.prompt+'，输出 '+group.completion+'）'));
+    output.append(node('h3','按小时统计（浏览器本地时间）'));for(const hour of report.hourly)output.append(row(timeLabel(hour.hour)+' · '+hour.decision_mode,String(hour.tokens)+' Token'));
+    output.append(node('h3','当前群聊退避状态'));for(const state of data.states)output.append(row(JSON.parse(state.scope).join(' / '),'连续沉默 '+state.silence+' 次，待处理 '+state.pending+' 条'));
+  }
+  range.onsubmit=e=>{e.preventDefault();perform(show,load,'统计已更新',false);};await load();
 }
 
 async function douyinAccount(root) {

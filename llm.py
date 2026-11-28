@@ -21,11 +21,12 @@ class ModelError(Exception):
 class ModelReply(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    text: str
-    emotion: Emotion
-    intensity: Annotated[int, Field(ge=0, le=3)]
-    sticker: str | None
+    text: str = ''
+    emotion: Emotion = 'neutral'
+    intensity: Annotated[int, Field(ge=0, le=3)] = 0
+    sticker: str | None = None
     should_send: bool = Field(alias="shouldSend")
+    target_message_id: str | None = Field(default=None,alias='targetMessageId',max_length=200)
 
 
 class SummaryReply(BaseModel):
@@ -37,6 +38,7 @@ class SummaryReply(BaseModel):
 class Usage:
     prompt: int = 0
     completion: int = 0
+    estimated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +61,8 @@ def parse_reply(content: str, max_chars: int) -> ModelReply:
     reply.text = reply.text.strip()
     if reply.should_send and not reply.text:
         raise ModelError("empty_reply")
+    if reply.should_send and not {'text','emotion','intensity','sticker'}.issubset(reply.model_fields_set):
+        raise ModelError('invalid_model_json')
     if max_chars and len(reply.text) > max_chars:
         raise ModelError("reply_too_long")
     return reply
@@ -117,10 +121,16 @@ class DeepSeekClient:
             except ModelError as exc:
                 reason, retry = str(exc), False
             else:
+                from usage_ledger import emit
+                emit(calls=1,prompt=result.usage.prompt if not result.usage.estimated else len((system+user).encode()),
+                     completion=result.usage.completion if not result.usage.estimated else len(result.content.encode()),
+                     estimated=result.usage.estimated,latency=time.monotonic()-started)
                 log.info("DeepSeek 请求成功 用时 %.2fs 输入 %d 输出 %d",
                          time.monotonic() - started, result.usage.prompt, result.usage.completion)
                 return result
             # 日志仅保留受控错误码、耗时和次数。
+            from usage_ledger import emit
+            emit('error',calls=1,unknown=True,latency=time.monotonic()-started)
             log.warning("DeepSeek 请求失败 %s 第 %d 次 用时 %.2fs", reason, attempt + 1, time.monotonic() - started)
             if not retry or attempt + 1 == self.attempts:
                 raise ModelError(reason) from None
@@ -141,6 +151,7 @@ class DeepSeekClient:
                 raise TypeError
             usage = result.get("usage") or {}
             return Completion(content, Usage(token_count(usage, "prompt_tokens"),
-                                             token_count(usage, "completion_tokens")))
+                                             token_count(usage, "completion_tokens"),
+                                             not all(type(usage.get(k)) is int for k in ('prompt_tokens','completion_tokens'))))
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):
             raise ModelError("invalid_deepseek_response") from None

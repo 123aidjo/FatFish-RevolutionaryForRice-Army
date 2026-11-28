@@ -53,6 +53,7 @@ class PersonaEdit(Versioned):
     max_chars: int = Field(ge=0, le=1000)
     temperature: float = Field(ge=0, le=2)
     emotions: list[Emotion] = Field(min_length=1, max_length=8)
+    aliases: list[Tag] | None = Field(default=None,max_length=20)
 
 
 class SettingsEdit(Versioned):
@@ -385,11 +386,13 @@ def create_app(
 
     @api.put("/persona")
     def save_persona(payload: PersonaEdit):
-        details = payload.model_dump(exclude={"revision"})
+        details = payload.model_dump(exclude={"revision"},exclude_none=True)
         if not all(details[key].strip() for key in ("name", "system_prompt")):
             raise error(422, "名称和人设提示词不能为空")
         if any(data.redact(details[key]) != details[key] for key in ("name", "style", "system_prompt")):
             raise error(422, "人设字段包含凭据信息，请移除后再保存")
+        if any(data.redact(value)!=value for value in details.get('aliases',[])):
+            raise error(422,'昵称包含凭据信息')
         details["emotions"] = list(dict.fromkeys(details["emotions"]))
         return configuration_result(lambda: config.update(
             payload.revision, "persona.toml", lambda values: {**values, **details}, "save_persona",
@@ -538,5 +541,7 @@ def create_app(
                  lambda: live_qq.key() if live_qq else os.environ.get("DEEPSEEK_API_KEY", "").strip(),
                  client=douyin_client, model=douyin_model)
     api.include_router(cognition_routes(store, current, demo_memory, live_qq=live_qq, redactor=data.redactor))
+    from reply_panel import routes as reply_routes
+    api.include_router(reply_routes(store,current))
     app.include_router(api)
     return app

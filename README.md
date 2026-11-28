@@ -213,7 +213,7 @@ M1 在 SQLite schema 4 上为事件记录 `memory_allowed`。旧事件缺少该�
 
 ## M2 认知记忆
 
-当前版本在原 M2/M3 上增加语义检索与记忆成长，数据库已升级为 **schema 6**。在现有记忆工作台的“语义检索与成长”中配置 Embedding、档位、到期评价及后台反思；使用方式、默认参数和迁移说明见 [MEMORY.md](MEMORY.md)。以下 M2/M3 说明介绍原有能力，新自动模型功能默认关闭。
+当前版本在原 M2/M3 上增加语义检索与记忆成长，随后加入动态回复决策，数据库现为 **schema 7**。在现有记忆工作台的“语义检索与成长”中配置 Embedding、档位、到期评价及后台反思；使用方式见 [MEMORY.md](MEMORY.md)。在“系统设置 → 动态回复决策”切换节能/均衡模式、配置退避和Planner、查看分阶段消耗，详见 [REPLY_DECISIONS.md](REPLY_DECISIONS.md)。以下 M2/M3 说明介绍原有能力，新记忆自动模型功能默认关闭。
 
 schema 5 原地增表。原始消息、短期窗口、长摘要和 Outbox 沿用 M1 表结构。新增 `memory_nodes`、`memory_edges`、`memory_sources`、`memory_revisions`、`memory_jobs`、`memory_goals`、`memory_self_state`、`memory_suppression`。反思使用类型为 `reflection` 的节点及 `supports` 证据边，关系边的两个端点通过复合外键限定于同一作用域。
 
@@ -225,7 +225,7 @@ schema 5 原地增表。原始消息、短期窗口、长摘要和 Outbox 沿用
 
 M3 管理 API 继续复用本机令牌和 Origin 校验。读取接口为 `GET /api/cognition`、`GET /api/cognition/self`、`GET /api/cognition/nodes`、`GET /api/cognition/nodes/{id}`。详情包括证据、关系和修订。按 `platform/kind/channel/mode` 传入作用域。修改用 `PUT /api/cognition/nodes/{id}/state`、`PUT /api/cognition/nodes/{id}/goal`、`POST /api/cognition/nodes/{id}/forget`。写操作校验版本，遗忘还须提交对应节点编号。开启反思后可用 `POST /api/cognition/reflections` 请求按当前证据重新评估。
 
-旧程序不能直接打开新版数据库。当前 schema 6 的回退说明见 [MEMORY.md](MEMORY.md)；不要直接删除表或修改版本号降级。恢复升级前快照前，应保留现库并核对快照之后的新事件与发送记录。
+旧程序不能直接打开新版数据库。当前 schema 7 的增量表见 [REPLY_DECISIONS.md](REPLY_DECISIONS.md)；不要直接删除表或修改版本号降级。恢复升级前快照前，应保留现库并核对快照之后的新事件与发送记录。
 
 ## M3 中文记忆工作台
 
@@ -236,7 +236,7 @@ M3 管理 API 继续复用本机令牌和 Origin 校验。读取接口为 `GET /
 - schema 5 的消息来源时点和节点时点可能一致且无独立记录。界面将事件发生日期标记为未独立确认，系统首次观测也不能用来推定历史改名日期。
 - 管理员修订生成独立版本并保留原始来源，修订内容会明确标记为管理员的版本。遗忘需要核对当前版本并输入节点编号，保留原始聊天审计及历史备份。
 - 新增接口为 `GET /api/cognition/graph`、`/people`、`/timeline`、`/nodes/{id}/sources/{job_id}`、`/nodes/{id}/forget-impact`，以及 `POST /api/cognition/preview`、`PUT /api/cognition/nodes/{id}/content`。原节点列表追加置信度、排序和分页信息。每个请求均限制作用域；演示需明确指定 `dataset=demo`。
-- 原 M3 使用 schema 5；当前新增的记忆成长使用 schema 6，不能按旧版仅替换源码的方法回滚数据库。
+- 原 M3 使用 schema 5，记忆成长引入 schema 6，动态回复使用 schema 7；不能按旧版仅替换源码的方法回滚数据库。
 
 ### 主人 QQ 私聊与问候
 

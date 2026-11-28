@@ -13,7 +13,7 @@ from ratelimit import start_of_day
 from settings import Limits
 from stickers import StickerPolicy
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 PANEL_SCHEMA = (
     """CREATE TABLE panel_audit (
@@ -100,7 +100,7 @@ class Store:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version == SCHEMA_VERSION:
                 return
-            if version not in {0, 1, 2, 3, 4, 5}:
+            if version not in {0, 1, 2, 3, 4, 5, 6}:
                 raise RuntimeError(f"SQLite 结构版本不受支持（{version}）")
             if version == 0:
                 db.execute("""
@@ -128,7 +128,11 @@ class Store:
                 for sql in COGNITIVE_SCHEMA:
                     db.execute(sql)
             from memory_upgrade_schema import SCHEMA as UPGRADE_SCHEMA
-            for sql in UPGRADE_SCHEMA:
+            if version < 6:
+                for sql in UPGRADE_SCHEMA:
+                    db.execute(sql)
+            from reply_schema import SCHEMA as REPLY_SCHEMA
+            for sql in REPLY_SCHEMA:
                 db.execute(sql)
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -177,7 +181,7 @@ class Store:
 
     def accept(self, event: Event, every: int, now: float, *, mode: str = "simulation",
                reply_block: str = "", defer_quote: bool = False, owner_checkin: bool = False,
-               cognition: bool = False) -> int | None:
+               cognition: bool = False, dynamic=None, decision_config=None) -> int | None:
         with self._write() as db:
             if not self._insert_event(db, event):
                 return None
@@ -193,7 +197,7 @@ class Store:
             if reply_block or owner_checkin:
                 decision = Decision(reply_block or OWNER_CHECKIN, count)
             else:
-                decision = decide(event, count, every)
+                decision = decide(event, count, 0 if dynamic else every)
             db.execute("""
                 UPDATE conversations SET ordinary_count=?
                 WHERE platform=? AND channel_kind=? AND channel_id=?
@@ -212,6 +216,8 @@ class Store:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (*event.key, "evaluate" if evaluate else "skipped", trigger,
                   "" if evaluate else decision.reason, mode))
+            if dynamic is not None:
+                dynamic.accepted(db,event,row.lastrowid,decision_config,now,blocked=bool(reply_block),proactive=bool(every))
             if cognition and event.memory_allowed is True and not event.is_self and event.sender_id and event.text.strip():
                 scope = json.dumps([*key, mode], ensure_ascii=False, separators=(",", ":"))
                 db.execute("""INSERT INTO memory_jobs(scope,mode,platform,channel_kind,channel_id,message_id,available)

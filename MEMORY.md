@@ -46,6 +46,8 @@ LLM 提取复用原 `memory_jobs`。每批只处理同一会话、同一主体�
 
 数据库版本由 5 升到 6：只新增 `memory_vectors`、`memory_lifecycle`、`memory_tasks`、索引和同步触发器。保留原 `memory_nodes/edges/sources/revisions` 及状态约束，存量节点补派生元数据。初始化重复执行不重复迁移，不清空历史。升级后的数据库不应直接交给旧程序写入；若需回退程序，使用升级前自行保留的完整数据库备份。
 
+后续动态回复决策将数据库推进至版本7，记忆表保持不变，详见 [REPLY_DECISIONS.md](REPLY_DECISIONS.md)。后台记忆任务新增独立实际用量记录，与聊天决策统计分开。
+
 ## 接口与代码索引
 
 以下接口沿用面板鉴权与 Origin 校验，前缀 `/api/cognition`。

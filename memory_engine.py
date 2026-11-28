@@ -130,6 +130,8 @@ class Embeddings:
         self.config,self.transport=config,transport
 
     async def embed(self,texts,timeout=None):
+        from usage_ledger import emit
+        started=time.monotonic(); metered=False
         cfg=self.config
         headers={'Authorization':'Bearer '+cfg.api_key} if cfg.api_key else {}
         body={'model':cfg.model,'input':texts,'encoding_format':'float'}
@@ -139,6 +141,12 @@ class Embeddings:
                 response=await client.post(cfg.base_url+'/embeddings',headers=headers,json=body)
                 response.raise_for_status()
                 payload=response.json()
+            usage=payload.get('usage') or {}
+            tokens=usage.get('prompt_tokens',usage.get('total_tokens'))
+            actual=type(tokens) is int and tokens>=0
+            emit(stage_name='embedding',calls=1,prompt=tokens if actual else sum(len(t.encode()) for t in texts),
+                 estimated=not actual,latency=time.monotonic()-started)
+            metered=True
             rows=sorted(payload['data'],key=lambda r:r['index'])
             if [r['index'] for r in rows]!=list(range(len(texts))): raise ValueError()
             vectors=[]
@@ -154,8 +162,14 @@ class Embeddings:
                 vectors.append([v/norm for v in values])
             if len({len(v) for v in vectors})!=1: raise ValueError()
             return vectors
-        except EngineError: raise
+        except EngineError:
+            if not metered: emit('error',stage_name='embedding',calls=1,unknown=True,latency=time.monotonic()-started)
+            raise
+        except asyncio.CancelledError:
+            if not metered: emit('error',stage_name='embedding',calls=1,unknown=True,latency=time.monotonic()-started)
+            raise
         except Exception:
+            if not metered: emit('error',stage_name='embedding',calls=1,unknown=True,latency=time.monotonic()-started)
             raise EngineError('embedding_unavailable_or_invalid') from None
 
 
@@ -179,7 +193,10 @@ class VectorIndex:
                 db.execute("UPDATE memory_vectors SET state='running',lease=?,available=?,attempts=attempts+1,generation=? WHERE node_id=?",(lease,now+cfg.timeout+30,generation,row['id']))
         if not rows: return 0
         try:
-            vectors=await (self.client or Embeddings(cfg)).embed([r['topic']+'\n'+r['value'] for r in rows])
+            from usage_ledger import meter
+            # A batch can span authorized scopes; its shared bill belongs to the role total.
+            with meter(self.store,'','background','background',stage='memory_index'):
+                vectors=await (self.client or Embeddings(cfg)).embed([r['topic']+'\n'+r['value'] for r in rows])
             with self.store.transaction() as db:
                 if read_config(self.store)[0].fingerprint()!=generation: return 0
                 known=db.execute("SELECT dimension FROM memory_vectors WHERE generation=? AND state='ready' LIMIT 1",(generation,)).fetchone()

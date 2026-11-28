@@ -236,6 +236,9 @@ def test_m2_v4_migration_preserves_events_no_backfill(tmp_path):
                if r[0]!="memory_entries"]
         for name in reversed(names):
             db.execute("DROP TABLE "+name)
+        # Reconstruct a genuine v4 fixture, including removal of later reply-decision tables.
+        for name in ('reply_pending','reply_rounds','reply_state','model_usage'):
+            db.execute('DROP TABLE '+name)
         db.execute("PRAGMA user_version=4")
         baseline=db.execute("SELECT payload FROM events").fetchall()
     backup=tmp_path/"verified-backup.db"
